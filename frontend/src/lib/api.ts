@@ -154,6 +154,76 @@ export async function sendChat(
   return response.json();
 }
 
+// ---- Streaming chat ----
+
+// One step of the agent's work, e.g. "Searching your documents" -> "5 passages found".
+export type AgentStep = {
+  node: string;
+  label: string;
+  status: "running" | "done";
+  detail?: string | null;
+};
+
+export type StreamHandlers = {
+  onStep: (step: AgentStep) => void;
+  onToken: (text: string) => void;
+  onReset: () => void; // the agent threw its draft away (e.g. rewriting for accuracy)
+};
+
+// Thrown when the stream couldn't start at all, so the caller can fall back to /api/chat.
+export class StreamUnavailableError extends Error {}
+
+// Ask a question and receive the answer as it's being made (Server-Sent Events).
+// The browser's EventSource only does GET, and we need POST, so we read the stream ourselves.
+export async function streamChat(
+  message: string,
+  history: ChatTurn[],
+  threadId: string | null,
+  documentIds: string[] | null,
+  handlers: StreamHandlers,
+): Promise<ChatResponse> {
+  let response: Response;
+  try {
+    response = await authFetch("/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history, thread_id: threadId, document_ids: documentIds }),
+    });
+  } catch (err) {
+    if (err instanceof UnauthorizedError) throw err;
+    throw new StreamUnavailableError(err instanceof Error ? err.message : "stream failed");
+  }
+  if (!response.body) throw new StreamUnavailableError("no stream body");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // Events are separated by a blank line: "event: x\ndata: {...}\n\n"
+    let end: number;
+    while ((end = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      let event = "message";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) event = line.slice(7);
+        else if (line.startsWith("data: ")) data += line.slice(6);
+      }
+      const payload = data ? JSON.parse(data) : {};
+      if (event === "step") handlers.onStep(payload as AgentStep);
+      else if (event === "token") handlers.onToken(payload.text);
+      else if (event === "reset") handlers.onReset();
+      else if (event === "done") return payload as ChatResponse;
+      else if (event === "error") throw new Error(payload.detail ?? "Something went wrong");
+    }
+  }
+  throw new Error("The answer stream ended unexpectedly. Please try again.");
+}
+
 // Rate an answer: 1 = 👍, 0 = 👎, optionally with a comment. Voting again changes the vote.
 export async function sendFeedback(runId: string, score: 0 | 1, comment?: string): Promise<void> {
   await authFetch("/api/feedback", {

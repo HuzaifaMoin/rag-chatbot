@@ -2,12 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import AgentSteps from "@/components/AgentSteps";
 import ChatMessage, { type Message } from "@/components/ChatMessage";
 import SourcesPanel from "@/components/SourcesPanel";
 import {
   listDocuments,
   sendChat,
+  streamChat,
+  StreamUnavailableError,
   UnauthorizedError,
+  type AgentStep,
+  type ChatResponse,
   type ChatTurn,
   type DocumentItem,
 } from "@/lib/api";
@@ -20,6 +27,18 @@ const SUGGESTIONS = [
   "What are the most important facts in my documents?",
   "What is 15% of 2,400?",
 ];
+
+// A step event either starts a new step or finishes the latest running one with the same name.
+function upsertStep(steps: AgentStep[], step: AgentStep): AgentStep[] {
+  if (step.status === "done") {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (steps[i].node === step.node && steps[i].status === "running") {
+        return steps.map((s, j) => (j === i ? step : s));
+      }
+    }
+  }
+  return [...steps, step];
+}
 
 function toHistory(messages: Message[]): ChatTurn[] {
   // The conversation so far, without the backend's extra fields.
@@ -37,6 +56,8 @@ export default function ChatPage() {
   // Sources the user unticked (like NotebookLM's checkboxes). Empty = use every document.
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [showSources, setShowSources] = useState(false); // the slide-over panel on phones
+  // The answer being streamed right now: the agent's steps so far and the text so far.
+  const [live, setLive] = useState<{ steps: AgentStep[]; text: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -53,7 +74,7 @@ export default function ChatPage() {
   // Whenever the message list changes, scroll so the newest message is visible.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, live]);
 
   // Keyboard shortcuts: "/" jumps to the question box, Esc closes the sources panel.
   useEffect(() => {
@@ -90,10 +111,34 @@ export default function ChatPage() {
     setMessages([...earlier, { role: "user", content: question }]);
     setError("");
     setLoading(true);
+    setLive({ steps: [], text: "" });
     try {
-      const response = await sendChat(question, toHistory(earlier), threadId, documentIds);
+      let steps: AgentStep[] = [];
+      let started = false; // did any event arrive? (if not, we can quietly fall back)
+      let response: ChatResponse;
+      try {
+        response = await streamChat(question, toHistory(earlier), threadId, documentIds, {
+          onStep: (step) => {
+            started = true;
+            steps = upsertStep(steps, step);
+            setLive((l) => l && { ...l, steps });
+          },
+          onToken: (text) => {
+            started = true;
+            setLive((l) => l && { ...l, text: l.text + text });
+          },
+          onReset: () => setLive((l) => l && { ...l, text: "" }),
+        });
+      } catch (err) {
+        // Streaming not available (old backend, proxy...): use the normal endpoint instead.
+        if (!(err instanceof StreamUnavailableError) || started) throw err;
+        response = await sendChat(question, toHistory(earlier), threadId, documentIds);
+      }
       setThreadId(response.thread_id);
-      setMessages((prev) => [...prev, { role: "assistant", content: response.answer, response }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: response.answer, response, steps: steps.length ? steps : undefined },
+      ]);
     } catch (err) {
       if (err instanceof UnauthorizedError) {
         router.push("/login");
@@ -104,6 +149,7 @@ export default function ChatPage() {
       setInput(question);
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
+      setLive(null);
       setLoading(false);
     }
   }
@@ -243,16 +289,30 @@ export default function ChatPage() {
             />
           ))}
           {loading && (
-            <div className="flex w-fit items-center gap-1.5 rounded-2xl rounded-bl-md border bg-card px-4 py-3">
-              <span className="sr-only">Thinking…</span>
-              {[0, 150, 300].map((delay) => (
-                <span
-                  key={delay}
-                  className="h-2 w-2 animate-bounce rounded-full bg-brand"
-                  style={{ animationDelay: `${delay}ms` }}
-                  aria-hidden="true"
-                />
-              ))}
+            <div className="flex max-w-[92%] flex-col gap-2">
+              {live && live.steps.length > 0 ? (
+                <AgentSteps steps={live.steps} finished={false} />
+              ) : (
+                <div className="flex w-fit items-center gap-1.5 rounded-2xl rounded-bl-md border bg-card px-4 py-3">
+                  <span className="sr-only">Thinking…</span>
+                  {[0, 150, 300].map((delay) => (
+                    <span
+                      key={delay}
+                      className="h-2 w-2 animate-bounce rounded-full bg-brand"
+                      style={{ animationDelay: `${delay}ms` }}
+                      aria-hidden="true"
+                    />
+                  ))}
+                </div>
+              )}
+              {live?.text && (
+                <div
+                  aria-label="Answer so far"
+                  className="prose prose-sm max-w-none rounded-2xl rounded-bl-md border bg-card px-4 py-3 shadow-sm"
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{live.text + " ▍"}</ReactMarkdown>
+                </div>
+              )}
             </div>
           )}
           <div ref={bottomRef} />

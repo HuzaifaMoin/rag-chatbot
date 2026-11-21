@@ -501,3 +501,142 @@ async def run_agent(
         config=config,
     )
     return state, run_id, thread_id
+
+
+# --- streaming (POST /api/chat/stream) -----------------------------------------------
+# The same graph as run_agent, watched live: which step is running, and the answer's words.
+
+# Nodes whose LLM text is the actual answer (everything else is internal: rewriting, grading...).
+ANSWER_NODES = {"generate", "tool_agent"}
+
+STEP_LABELS = {
+    "guard_input": "Checking the question is safe",
+    "rewrite": "Understanding your question",
+    "retrieve": "Searching your documents",
+    "grade": "Picking the relevant passages",
+    "generate": "Writing the answer",
+    "check_grounding": "Checking the answer against the sources",
+    "tool_agent": "Looking beyond your documents",
+    "fallback": "Not enough information",
+    "finalize": "Adding citations",
+}
+
+
+def step_detail(node: str, result: dict[str, Any]) -> str | None:
+    """A short human note for a finished step, e.g. '5 passages found'."""
+    if node == "guard_input" and result.get("source") == "blocked":
+        return "Blocked: looks like a prompt-injection attempt"
+    if node == "rewrite" and result.get("search_query"):
+        return f'Searching for "{result["search_query"]}"'
+    if node == "retrieve":
+        n = len(result.get("candidates") or [])
+        return f"{n} passage{'s' if n != 1 else ''} found"
+    if node == "grade":
+        n = len(result.get("context") or [])
+        return f"{n} relevant" if n else "None relevant"
+    if node == "generate" and NOT_FOUND in (result.get("answer") or ""):
+        return "Not covered by your documents"
+    if node == "check_grounding":
+        grounded = result.get("grounded")
+        if grounded is True:
+            return "Supported by the sources"
+        if grounded is False:
+            return "Not fully supported, rewriting"
+        return "Check unavailable"
+    if node == "tool_agent":
+        tools = sorted(set(result.get("tools_used") or []))
+        names = {"web_search": "web search", "calculator": "calculator"}
+        return "Used " + " and ".join(names.get(t, t) for t in tools) if tools else None
+    return None
+
+
+class AnswerStreamFilter:
+    """Passes answer text through as it streams, except the NOT_IN_DOCUMENTS marker:
+    text is held back while it could still be the start of that marker."""
+
+    def __init__(self) -> None:
+        self.pending = ""
+        self.released = False
+
+    def feed(self, text: str) -> str:
+        if self.released:
+            return text
+        self.pending += text
+        stripped = self.pending.lstrip()
+        if NOT_FOUND.startswith(stripped) or stripped.startswith(NOT_FOUND):
+            return ""  # might be (or is) the marker: keep holding
+        self.released = True
+        out, self.pending = self.pending, ""
+        return out
+
+
+async def stream_agent(
+    *,
+    question: str,
+    owner_id: uuid.UUID,
+    history: list[dict[str, str]] | None = None,
+    document_ids: list[uuid.UUID] | None = None,
+    thread_id: str | None = None,
+):
+    """Run the graph and yield events as dicts: step / token / reset, then one final
+    {"type": "final", "state", "run_id", "thread_id"}."""
+    run_id = uuid.uuid4()
+    thread_id = thread_id or str(uuid.uuid4())
+    config: RunnableConfig = {
+        "run_id": run_id,
+        "run_name": "rag-agent",
+        "metadata": {"thread_id": thread_id, "user_id": str(owner_id), "streamed": True},
+        "tags": ["chat"],
+    }
+    inputs = {
+        "question": question,
+        "history": history or [],
+        "owner_id": str(owner_id),
+        "document_ids": [str(d) for d in document_ids or []] or None,
+    }
+    final_state: AgentState = {}
+    text_filter = AnswerStreamFilter()
+    sent_text = False
+
+    async for mode, payload in agent.astream(
+        inputs, config=config, stream_mode=["tasks", "messages", "values"]
+    ):
+        if mode == "values":
+            final_state = payload
+        elif mode == "tasks":
+            node = payload["name"]
+            if node not in STEP_LABELS:
+                continue
+            if "result" not in payload:  # the step is starting
+                if node in ANSWER_NODES:
+                    if sent_text:  # a new draft replaces the previous one
+                        yield {"type": "reset"}
+                        sent_text = False
+                    text_filter = AnswerStreamFilter()
+                yield {
+                    "type": "step",
+                    "node": node,
+                    "label": STEP_LABELS[node],
+                    "status": "running",
+                }
+            else:
+                result = payload["result"] if isinstance(payload["result"], dict) else {}
+                yield {
+                    "type": "step",
+                    "node": node,
+                    "label": STEP_LABELS[node],
+                    "status": "done",
+                    "detail": step_detail(node, result),
+                }
+        elif mode == "messages":
+            chunk, meta = payload
+            if meta.get("langgraph_node") not in ANSWER_NODES:
+                continue
+            content = getattr(chunk, "content", "")
+            if isinstance(content, str) and content:
+                out = text_filter.feed(content)
+                if out:
+                    sent_text = True
+                    yield {"type": "token", "text": out}
+
+    yield {"type": "final", "state": final_state, "run_id": run_id, "thread_id": thread_id}

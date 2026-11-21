@@ -3,14 +3,15 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { sendFeedback, type ChatResponse, type Citation } from "@/lib/api";
+import AgentSteps from "@/components/AgentSteps";
+import { sendFeedback, type AgentStep, type ChatResponse, type Citation } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
 // A message in the chat. Bot messages also carry the full backend response
 // (source, citations...); user messages only have text.
 export type Message =
   | { role: "user"; content: string }
-  | { role: "assistant"; content: string; response: ChatResponse };
+  | { role: "assistant"; content: string; response: ChatResponse; steps?: AgentStep[] };
 
 // Label and colours for each possible "source" value (theme tokens from globals.css).
 const SOURCE_BADGES: Record<ChatResponse["source"], { label: string; className: string }> = {
@@ -73,6 +74,9 @@ export default function ChatMessage({
 
   return (
     <div className="flex max-w-[92%] flex-col gap-2">
+      {message.steps && (
+        <AgentSteps steps={message.steps} finished seconds={response.latency_ms / 1000} />
+      )}
       {/* Markdown -> real formatting. react-markdown ignores raw HTML, so planted <script> tags can't run. */}
       <div className="prose prose-sm max-w-none rounded-2xl rounded-bl-md border bg-card px-4 py-3 shadow-sm">
         <ReactMarkdown

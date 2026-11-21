@@ -27,7 +27,28 @@ const FAKE_ANSWER = {
   latency_ms: 1234,
 };
 
+// The streamed version of FAKE_ANSWER, as Server-Sent Events.
+function sse(event: string, data: object) {
+  return `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+}
+const FAKE_STREAM = [
+  sse("step", { node: "retrieve", label: "Searching your documents", status: "running" }),
+  sse("step", { node: "retrieve", label: "Searching your documents", status: "done", detail: "1 passage found" }),
+  sse("step", { node: "generate", label: "Writing the answer", status: "running" }),
+  sse("token", { text: "Solar panels last " }),
+  sse("token", { text: "about **25 years** [1]." }),
+  sse("step", { node: "generate", label: "Writing the answer", status: "done" }),
+  sse("step", { node: "finalize", label: "Adding citations", status: "done" }),
+  sse("done", FAKE_ANSWER),
+].join("");
+
 async function fakeTheLLM(page: Page) {
+  await page.route("**/api/chat/stream", (route) =>
+    route.fulfill({ contentType: "text/event-stream", body: FAKE_STREAM }),
+  );
   await page.route("**/api/chat", (route) => route.fulfill({ json: FAKE_ANSWER }));
   await page.route("**/api/feedback", (route) => route.fulfill({ status: 204 }));
 }
@@ -80,6 +101,12 @@ test("a new user can sign up, upload, chat, vote, delete and log out", async ({ 
     await expect(page.getByText("Searching 1 of 1 document")).toBeVisible();
     await page.getByPlaceholder(/Ask a question/).fill("How long do solar panels last?");
     await page.keyboard.press("Enter");
+
+    // The agent's steps fold into one line once the answer is done; click to open them.
+    const stepsToggle = page.getByRole("button", { name: /✓ 3 steps/ });
+    await expect(stepsToggle).toBeVisible();
+    await stepsToggle.click();
+    await expect(page.getByText("1 passage found")).toBeVisible();
 
     // Markdown is rendered: **25 years** becomes bold text, not asterisks.
     await expect(page.locator("strong", { hasText: "25 years" })).toBeVisible();

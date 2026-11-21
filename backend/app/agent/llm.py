@@ -28,5 +28,7 @@ def answer_llm() -> ChatGroq:
 
 @lru_cache
 def guard_llm() -> ChatGroq:
-    """Llama Prompt Guard 2: returns the probability that the input is an attack."""
-    return _groq(get_settings().guard_model, temperature=0, max_tokens=10)
+    """Llama Prompt Guard 2: returns the probability that the input is an attack.
+    disable_streaming: when the agent is streamed (/api/chat/stream), LangChain would otherwise
+    try to stream this model too. Groq rejects that for classifiers, so the check got skipped."""
+    return _groq(get_settings().guard_model, temperature=0, max_tokens=10, disable_streaming=True)
