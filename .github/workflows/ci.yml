@@ -47,10 +47,10 @@ jobs:
       FASTEMBED_CACHE_PATH: ${{ github.workspace }}/.fastembed_cache
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.12"
           enable-cache: true
@@ -65,7 +65,7 @@ jobs:
 
       # The embedding model + reranker (~150 MB) download once, then come from this cache.
       - name: Cache embedding models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.fastembed_cache
           key: fastembed-${{ hashFiles('backend/app/config.py') }}
@@ -82,10 +82,10 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Node 22
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

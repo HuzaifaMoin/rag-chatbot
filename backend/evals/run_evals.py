@@ -123,6 +123,40 @@ def sync_dataset(client: Client) -> None:
     )
 
 
+def write_github_summary(
+    totals: dict[str, list[float]], failures: list[str], url: str, rate: float
+) -> None:
+    """On GitHub Actions, show the score table on the workflow run's summary page."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return  # not running on GitHub
+    gate = "✅ passed" if rate >= MIN_CORRECTNESS else "❌ FAILED"
+    lines = [
+        "## Eval results",
+        "",
+        "| Check | Passed | Score |",
+        "|---|---|---|",
+    ]
+    for key in ("correctness", "right_source", "cites_sources", "no_hallucination"):
+        scores = totals.get(key, [])
+        if scores:
+            lines.append(
+                f"| {key} | {sum(scores):.0f}/{len(scores)} | {sum(scores) / len(scores):.0%} |"
+            )
+    lines += [
+        "",
+        f"**Quality gate:** {gate} (correctness {rate:.0%}, minimum {MIN_CORRECTNESS:.0%})",
+        "",
+        f"[Full results in LangSmith]({url})",
+    ]
+    if failures:
+        lines += ["", "<details><summary>Failed checks</summary>", "", "```"]
+        lines += failures
+        lines += ["```", "</details>"]
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 # ---- 3. Run the agent on every question and score it ----
 
 
@@ -181,6 +215,7 @@ async def main() -> int:
 
     correctness_scores = totals.get("correctness", [])
     rate = sum(correctness_scores) / len(correctness_scores) if correctness_scores else 0.0
+    write_github_summary(totals, failures, results.url, rate)
     if rate < MIN_CORRECTNESS:
         print(f"\nQUALITY GATE FAILED: correctness {rate:.0%} < {MIN_CORRECTNESS:.0%}")
         return 1

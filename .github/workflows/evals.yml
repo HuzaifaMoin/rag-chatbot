@@ -1,0 +1,88 @@
+# Runs the LangSmith evals against the REAL agent (Groq LLM). Slow and uses API quota,
+# so it runs on demand and once a week, not on every push (that's ci.yml's job).
+# Fails if correctness drops below the quality gate; GitHub emails you when that happens.
+#
+# Needs two repository secrets: GROQ_API_KEY and LANGSMITH_API_KEY.
+name: Evals
+
+on:
+  workflow_dispatch: # "Run workflow" button in the Actions tab
+    inputs:
+      min_correctness:
+        description: "Quality gate: minimum correctness (0 to 1)"
+        default: "0.8"
+  schedule:
+    - cron: "0 6 * * 1" # every Monday at 06:00 UTC
+
+# Read-only. Deliberately NOT triggered by pull requests, so a PR can't get at the secrets.
+permissions:
+  contents: read
+
+# Only one eval run at a time (they share the Groq rate limits).
+concurrency:
+  group: evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    name: LangSmith evals (real LLM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      db:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+          POSTGRES_DB: rag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag -d rag"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      EVAL_DATABASE_URL: postgresql+asyncpg://rag:rag@localhost:5432/rag_eval
+      EVAL_MIN_CORRECTNESS: ${{ github.event.inputs.min_correctness || '0.8' }}
+      FASTEMBED_CACHE_PATH: ${{ github.workspace }}/.fastembed_cache
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      LANGSMITH_TRACING: "true"
+      LANGSMITH_ENDPOINT: https://api.smith.langchain.com
+      LANGSMITH_AGENT_ID: rag
+      LANGSMITH_AGENT_ENVIRONMENT: development # keeps CI traces apart from your laptop's "local"
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the secrets are set
+        run: |
+          if [ -z "$GROQ_API_KEY" ] || [ -z "$LANGSMITH_API_KEY" ]; then
+            echo "::error::Add GROQ_API_KEY and LANGSMITH_API_KEY under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked
+
+      - name: Cache embedding models
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.fastembed_cache
+          key: fastembed-${{ hashFiles('backend/app/config.py') }}
+
+      - name: Run evals (quality gate)
+        run: uv run python -m evals.run_evals
