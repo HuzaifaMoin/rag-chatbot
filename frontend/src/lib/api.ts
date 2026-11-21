@@ -106,11 +106,12 @@ export async function sendChat(
   message: string,
   history: ChatTurn[],
   threadId: string | null,
+  documentIds: string[] | null = null, // null = search all your documents
 ): Promise<ChatResponse> {
   const response = await authFetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, thread_id: threadId }),
+    body: JSON.stringify({ message, history, thread_id: threadId, document_ids: documentIds }),
   });
   return response.json();
 }

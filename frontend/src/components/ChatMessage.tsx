@@ -11,21 +11,40 @@ export type Message =
   | { role: "user"; content: string }
   | { role: "assistant"; content: string; response: ChatResponse };
 
-// Text and colour for each possible "source" value.
+// Label and colours for each possible "source" value (theme tokens from globals.css).
 const SOURCE_BADGES: Record<ChatResponse["source"], { label: string; className: string }> = {
-  documents: { label: "📄 From your documents", className: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300" },
-  web: { label: "🌐 Web search", className: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" },
-  calculator: { label: "🧮 Calculator", className: "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300" },
-  general: { label: "💬 General knowledge", className: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200" },
-  none: { label: "🤷 Not found in your documents", className: "bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300" },
-  blocked: { label: "🛡️ Blocked by safety check", className: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" },
+  documents: { label: "📄 From your documents", className: "bg-success-soft text-success" },
+  web: { label: "🌐 Web search", className: "bg-info-soft text-info" },
+  calculator: { label: "🧮 Calculator", className: "bg-violet-soft text-violet" },
+  general: { label: "💬 General knowledge", className: "bg-muted text-muted-foreground" },
+  none: { label: "🤷 Not found in your documents", className: "bg-warning-soft text-warning" },
+  blocked: { label: "🛡️ Blocked by safety check", className: "bg-danger-soft text-danger" },
 };
 
+// "[1]" or "[2, W1]" in the answer -> markdown links "#cite-1", so we can render them as chips.
+const CITATION_RE = /\[((?:W?\d+)(?:\s*,\s*W?\d+)*)\]/g;
+function linkCitations(answer: string): string {
+  return answer.replace(CITATION_RE, (_, group: string) =>
+    group
+      .split(",")
+      .map((label) => `[${label.trim()}](#cite-${label.trim()})`)
+      .join(""),
+  );
+}
+
+function citationTitle(c: Citation): string {
+  if (c.type === "web") return c.title ?? c.url ?? "Web result";
+  return `${c.filename}${c.page ? ` · p. ${c.page}` : ""}`;
+}
+
 export default function ChatMessage({ message }: { message: Message }) {
+  // Which citation was last clicked (its source card gets highlighted).
+  const [active, setActive] = useState<string | null>(null);
+
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <p className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-zinc-900 px-4 py-2 text-white dark:bg-zinc-100 dark:text-zinc-900">
+        <p className="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 whitespace-pre-wrap text-primary-foreground shadow-sm">
           {message.content}
         </p>
       </div>
@@ -34,42 +53,110 @@ export default function ChatMessage({ message }: { message: Message }) {
 
   const { response } = message;
   const badge = SOURCE_BADGES[response.source];
+  const byLabel = new Map(response.citations.map((c) => [c.label, c]));
+  const idPrefix = `msg-${response.run_id}`;
+
+  function openCitation(label: string) {
+    setActive(label);
+    document.getElementById(`${idPrefix}-cite-${label}`)?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+    });
+  }
 
   return (
-    <div className="flex max-w-[90%] flex-col gap-2">
-      {/* Markdown → real formatting. react-markdown ignores raw HTML, so planted <script> tags can't run. */}
-      <div className="prose prose-sm max-w-none rounded-2xl bg-zinc-100 px-4 py-2 dark:prose-invert dark:bg-zinc-900">
+    <div className="flex max-w-[92%] flex-col gap-2">
+      {/* Markdown -> real formatting. react-markdown ignores raw HTML, so planted <script> tags can't run. */}
+      <div className="prose prose-sm max-w-none rounded-2xl rounded-bl-md border bg-card px-4 py-3 shadow-sm">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            a: (props) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+            a: ({ href, children, ...props }) => {
+              const label = href?.startsWith("#cite-") ? href.slice("#cite-".length) : null;
+              const citation = label ? byLabel.get(label) : undefined;
+              if (label && citation) {
+                return <CitationChip citation={citation} onOpen={() => openCitation(label)} />;
+              }
+              return (
+                <a href={href} {...props} target="_blank" rel="noopener noreferrer">
+                  {children}
+                </a>
+              );
+            },
           }}
         >
-          {message.content}
+          {linkCitations(message.content)}
         </ReactMarkdown>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className={`rounded-full px-2 py-0.5 font-medium ${badge.className}`}>
-          {badge.label}
-        </span>
+        <span className={`rounded-full px-2.5 py-1 font-medium ${badge.className}`}>{badge.label}</span>
         {response.grounded === false && (
-          <span className="text-yellow-700 dark:text-yellow-400">
-            ⚠️ Answer may not be fully supported by the sources
+          <span className="rounded-full bg-warning-soft px-2.5 py-1 text-warning">
+            ⚠️ May not be fully supported by the sources
           </span>
         )}
-        <span className="text-zinc-500">{(response.latency_ms / 1000).toFixed(1)}s</span>
+        <span className="text-muted-foreground">{(response.latency_ms / 1000).toFixed(1)}s</span>
         <FeedbackButtons runId={response.run_id} />
       </div>
 
       {response.citations.length > 0 && (
-        <ul className="flex flex-col gap-1">
+        <ul aria-label="Sources for this answer" className="grid gap-2 sm:grid-cols-2">
           {response.citations.map((citation) => (
-            <CitationItem key={citation.label} citation={citation} />
+            <CitationItem
+              key={citation.label}
+              id={`${idPrefix}-cite-${citation.label}`}
+              citation={citation}
+              highlighted={active === citation.label}
+            />
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+// The little orange [1] chip inside the answer. Hover (or keyboard focus) shows the source;
+// click scrolls to its card.
+function CitationChip({ citation, onOpen }: { citation: Citation; onOpen: () => void }) {
+  // The chat scrolls inside a box that clips anything sticking out, so the preview opens
+  // towards the side with room: right or left of the chip, above or below it.
+  const [place, setPlace] = useState({ x: "left-0", y: "bottom-full mb-2" });
+
+  function measure(event: React.SyntheticEvent<HTMLElement>) {
+    const chip = event.currentTarget.getBoundingClientRect();
+    const box = event.currentTarget.closest(".overflow-y-auto")?.getBoundingClientRect();
+    const left = box?.left ?? 0;
+    const right = box?.right ?? window.innerWidth;
+    const top = box?.top ?? 0;
+    setPlace({
+      x: chip.left - left > right - chip.right ? "right-0" : "left-0",
+      y: chip.top - top < 170 ? "top-full mt-2" : "bottom-full mb-2",
+    });
+  }
+
+  return (
+    <span
+      className="group relative inline-block align-baseline"
+      onMouseEnter={measure}
+      onFocus={measure}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Source ${citation.label}: ${citationTitle(citation)}`}
+        className="mx-0.5 rounded-md bg-accent px-1.5 py-px text-[0.7rem] font-semibold text-accent-foreground no-underline transition-colors hover:bg-brand hover:text-white"
+      >
+        {citation.label}
+      </button>
+      <span
+        role="tooltip"
+        className={`pointer-events-none invisible absolute ${place.x} ${place.y} z-30 w-72 max-w-[80vw] rounded-lg border bg-card p-3 text-left text-xs leading-relaxed font-normal text-card-foreground opacity-0 shadow-lg transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100`}
+      >
+        <span className="mb-1 block font-semibold text-primary-ink">{citationTitle(citation)}</span>
+        <span className="line-clamp-5 block text-muted-foreground">{citation.snippet}</span>
+      </span>
+    </span>
   );
 }
 
@@ -92,12 +179,14 @@ function FeedbackButtons({ runId }: { runId: string }) {
     }
   }
 
-  const base = "rounded px-1.5 py-0.5 transition";
+  const base = "rounded-md px-1.5 py-0.5 transition";
   const off = "opacity-50 grayscale hover:opacity-100 hover:grayscale-0";
-  const on = "bg-zinc-200 dark:bg-zinc-800";
+  const on = "bg-accent";
 
   return (
     <span className="ml-auto flex items-center gap-1">
+      {vote !== null && !error && <span className="text-muted-foreground">Thanks for the feedback</span>}
+      {error && <span className="text-danger">Couldn&apos;t save</span>}
       <button
         onClick={() => rate(1)}
         aria-label="Good answer"
@@ -114,29 +203,44 @@ function FeedbackButtons({ runId }: { runId: string }) {
       >
         👎
       </button>
-      {vote !== null && !error && <span className="text-zinc-500">Thanks for the feedback</span>}
-      {error && <span className="text-red-600">Couldn&apos;t save</span>}
     </span>
   );
 }
 
-function CitationItem({ citation }: { citation: Citation }) {
-  const title =
-    citation.type === "web"
-      ? citation.title ?? citation.url
-      : `${citation.filename}${citation.page ? `, page ${citation.page}` : ""}`;
-
+function CitationItem({
+  id,
+  citation,
+  highlighted,
+}: {
+  id: string;
+  citation: Citation;
+  highlighted: boolean;
+}) {
   return (
-    <li className="rounded border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-800">
-      <span className="font-semibold">[{citation.label}] </span>
-      {citation.type === "web" && citation.url ? (
-        <a href={citation.url} target="_blank" rel="noopener noreferrer" className="underline">
-          {title}
-        </a>
-      ) : (
-        <span className="font-medium">{title}</span>
-      )}
-      <p className="mt-1 line-clamp-2 text-zinc-600 dark:text-zinc-400">{citation.snippet}</p>
+    <li
+      id={id}
+      className={`rounded-xl border bg-card px-3 py-2.5 text-xs transition-shadow ${
+        highlighted ? "border-brand ring-2 ring-ring/30" : ""
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="rounded-md bg-accent px-1.5 py-px font-semibold text-accent-foreground">
+          {citation.label}
+        </span>
+        {citation.type === "web" && citation.url ? (
+          <a
+            href={citation.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="truncate font-medium text-primary-ink underline-offset-2 hover:underline"
+          >
+            {citationTitle(citation)}
+          </a>
+        ) : (
+          <span className="truncate font-medium">{citationTitle(citation)}</span>
+        )}
+      </div>
+      <p className="mt-1.5 line-clamp-3 text-muted-foreground">{citation.snippet}</p>
     </li>
   );
 }

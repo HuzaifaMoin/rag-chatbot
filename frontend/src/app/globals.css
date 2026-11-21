@@ -1,27 +1,146 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* Theme: the Zerobounds look (same tokens as the calling-agent app).
+   Cream background, orange #e1603e, deep-brown accents, Fraunces headings + Manrope text.
+   Buttons use a deeper orange (#c94a28) so white text stays readable (4.7:1).
+   Components use these names (bg-primary, text-muted-foreground...), never raw colours,
+   so the whole look lives in this one file. Dark mode follows the computer's setting. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fbf9f4;
+  --foreground: #2b2421;
+  --card: #ffffff;
+  --card-foreground: #2b2421;
+  --primary: #c94a28;
+  --primary-foreground: #ffffff;
+  --primary-ink: #8c3417;
+  --brand: #e1603e;
+  --muted: #f4efe7;
+  --muted-foreground: #6b605a;
+  --accent: #fcefe9;
+  --accent-foreground: #8c3417;
+  --border: #ebe4d9;
+  --input: #e2d9cc;
+  --ring: #e1603e;
+  --radius: 0.875rem;
+
+  /* Status + source-badge colours: meaning stays (green = ready, red = failed), tints fit the palette. */
+  --success: #2f7d4f;
+  --success-soft: #e7f3ec;
+  --warning: #8a5a00;
+  --warning-soft: #fbf1dc;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+  --info: #2f5f9e;
+  --info-soft: #e9f0fa;
+  --violet: #6a4b9c;
+  --violet-soft: #f0ebf8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Near-black neutrals; orange only for buttons, highlights and citations. */
+    --background: #0b0b0b;
+    --foreground: #f5f5f5;
+    --card: #171717;
+    --card-foreground: #f5f5f5;
+    --primary: #e8704f;
+    --primary-foreground: #0b0b0b;
+    --primary-ink: #f29a7a;
+    --brand: #e8704f;
+    --muted: #222222;
+    --muted-foreground: #a3a3a3;
+    --accent: #2a1f1a;
+    --accent-foreground: #f8c7b3;
+    --border: rgb(255 255 255 / 9%);
+    --input: rgb(255 255 255 / 14%);
+    --ring: #e8704f;
+
+    --success: #6fcf97;
+    --success-soft: #12261b;
+    --warning: #f2c46d;
+    --warning-soft: #2a2110;
+    --danger: #f28b82;
+    --danger-soft: #2c1513;
+    --info: #8db4ec;
+    --info-soft: #14202f;
+    --violet: #c3a8f0;
+    --violet-soft: #221a2e;
+  }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-ink: var(--primary-ink);
+  --color-brand: var(--brand);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-heading);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Markdown answers (react-markdown inside .prose) use the theme colours too. */
+.prose {
+  --tw-prose-body: var(--card-foreground);
+  --tw-prose-headings: var(--card-foreground);
+  --tw-prose-bold: var(--card-foreground);
+  --tw-prose-links: var(--primary-ink);
+  --tw-prose-bullets: var(--brand);
+  --tw-prose-counters: var(--muted-foreground);
+  --tw-prose-code: var(--primary-ink);
+  --tw-prose-quotes: var(--muted-foreground);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-hr: var(--border);
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border);
+}
+
+/* Slightly larger text: 17px instead of 16px (sizes are in rem, so spacing scales too).
+   Must stay outside @layer base, or Tailwind drops it. */
+html {
+  font-size: 106.25%;
 }

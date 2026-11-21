@@ -4,6 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { login, register } from "@/lib/api";
 import { saveToken } from "@/lib/auth";
+import { LogoMark } from "@/components/NavBar";
+
+const INPUT =
+  "rounded-lg border border-input bg-background px-3 py-2 font-normal outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -31,35 +35,52 @@ export default function LoginPage() {
   const isLogin = mode === "login";
 
   return (
-    <main className="flex flex-1 flex-col items-center justify-center p-8">
-      <form onSubmit={handleSubmit} className="flex w-full max-w-sm flex-col gap-4">
-        <h1 className="text-center text-3xl font-bold">
-          {isLogin ? "Log in" : "Create an account"}
-        </h1>
+    <main className="flex flex-1 flex-col items-center justify-center p-6">
+      <form
+        onSubmit={handleSubmit}
+        className="flex w-full max-w-sm flex-col gap-4 rounded-2xl border bg-card p-8 shadow-sm"
+      >
+        <div className="mb-2 flex flex-col items-center gap-3 text-center">
+          <LogoMark className="h-10 w-10" />
+          <h1 className="text-3xl font-semibold">{isLogin ? "Welcome back" : "Create an account"}</h1>
+          <p className="text-sm text-muted-foreground">
+            {isLogin ? "Log in to chat with your documents." : "Free, and takes ten seconds."}
+          </p>
+        </div>
 
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          className="rounded border border-zinc-300 bg-transparent px-3 py-2 dark:border-zinc-700"
-        />
-        <input
-          type="password"
-          placeholder={isLogin ? "Password" : "Password (at least 8 characters)"}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          className="rounded border border-zinc-300 bg-transparent px-3 py-2 dark:border-zinc-700"
-        />
+        <label className="flex flex-col gap-1.5 text-sm font-medium">
+          Email
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className={INPUT}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5 text-sm font-medium">
+          Password
+          <input
+            type="password"
+            placeholder={isLogin ? "Password" : "Password (at least 8 characters)"}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            className={INPUT}
+          />
+        </label>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && (
+          <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
+            {error}
+          </p>
+        )}
 
         <button
           type="submit"
           disabled={loading}
-          className="rounded bg-zinc-900 px-3 py-2 font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          className="mt-1 rounded-lg bg-primary px-3 py-2.5 font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {loading ? "Please wait…" : isLogin ? "Log in" : "Create account"}
         </button>
@@ -70,7 +91,7 @@ export default function LoginPage() {
             setMode(isLogin ? "signup" : "login");
             setError("");
           }}
-          className="text-sm text-zinc-600 underline dark:text-zinc-400"
+          className="text-sm text-muted-foreground underline-offset-4 hover:text-primary-ink hover:underline"
         >
           {isLogin ? "No account? Sign up" : "Have an account? Log in"}
         </button>

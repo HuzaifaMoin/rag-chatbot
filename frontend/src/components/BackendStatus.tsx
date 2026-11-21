@@ -15,11 +15,17 @@ export default function BackendStatus() {
       .catch(() => setStatus("offline"));
   }, []);
 
-  if (status === "checking") {
-    return <p className="text-sm text-zinc-500">🟡 Checking backend…</p>;
-  }
-  if (status === "connected") {
-    return <p className="text-sm text-green-600">✅ Backend connected</p>;
-  }
-  return <p className="text-sm text-red-600">❌ Backend not reachable</p>;
+  const dot = { checking: "bg-warning", connected: "bg-success", offline: "bg-danger" }[status];
+  const label = {
+    checking: "Checking backend…",
+    connected: "Backend connected",
+    offline: "Backend not reachable",
+  }[status];
+
+  return (
+    <p className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+      <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden="true" />
+      {label}
+    </p>
+  );
 }

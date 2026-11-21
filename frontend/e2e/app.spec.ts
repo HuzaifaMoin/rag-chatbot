@@ -71,16 +71,26 @@ test("a new user can sign up, upload, chat, vote, delete and log out", async ({ 
   await test.step("ask a question and see the answer with its source", async () => {
     await fakeTheLLM(page);
     await nav.getByRole("link", { name: "Chat", exact: true }).click();
+    // The sources panel lists the uploaded document, ticked.
+    const sources = page.getByRole("complementary", { name: "Your sources" });
+    await expect(sources.getByRole("checkbox")).toBeChecked();
+    await expect(page.getByText("Searching 1 of 1 document")).toBeVisible();
     await page.getByPlaceholder(/Ask a question/).fill("How long do solar panels last?");
     await page.keyboard.press("Enter");
 
     // Markdown is rendered: **25 years** becomes bold text, not asterisks.
     await expect(page.locator("strong", { hasText: "25 years" })).toBeVisible();
     await expect(page.getByText("**")).toHaveCount(0);
-    await expect(page.getByText("From your documents")).toBeVisible();
-    // Next.js keeps recently visited pages in the DOM (hidden) for instant back-navigation,
-    // so the Documents page's "solar-notes.txt" still exists: only look at visible text.
-    await expect(page.getByText("solar-notes.txt").filter({ visible: true })).toBeVisible();
+    // Next.js keeps visited pages in the DOM (hidden): the home page's preview card has this text too.
+    await expect(page.getByText("From your documents").filter({ visible: true })).toBeVisible();
+    const answerSources = page.getByRole("list", { name: "Sources for this answer" });
+    await expect(answerSources.getByText("solar-notes.txt")).toBeVisible();
+
+    // The [1] in the answer is a chip; hovering it previews the quoted passage.
+    await page.getByRole("button", { name: /^Source 1:/ }).hover();
+    await expect(page.getByRole("tooltip").filter({ visible: true })).toContainText(
+      "A typical solar panel lasts about 25 years.",
+    );
   });
 
   await test.step("rate the answer", async () => {
