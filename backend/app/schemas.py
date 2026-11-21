@@ -35,6 +35,21 @@ class DocumentOut(BaseModel):
     created_at: datetime
 
 
+class ChunkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    chunk_index: int
+    page: int | None
+    content: str
+
+
+class DocumentText(BaseModel):
+    """A document's text for the viewer: its passages in order (original files aren't kept)."""
+
+    document: DocumentOut
+    chunks: list[ChunkOut]
+
+
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     k: int = Field(default=5, ge=1, le=20)

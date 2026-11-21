@@ -10,6 +10,7 @@ import {
   type DocumentItem,
 } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import DocumentViewer, { type ViewerTarget } from "@/components/DocumentViewer";
 import StatusBadge from "@/components/StatusBadge";
 
 // A file being uploaded right now (before the backend has it).
@@ -24,6 +25,8 @@ export default function DocumentsPage() {
   const [error, setError] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [viewer, setViewer] = useState<ViewerTarget | null>(null);
+  const closeViewer = useCallback(() => setViewer(null), []);
 
   // One place to handle errors: 401 means "go log in", anything else is shown in red.
   const handleError = useCallback(
@@ -171,6 +174,8 @@ export default function DocumentsPage() {
         </p>
       )}
 
+      {viewer && <DocumentViewer target={viewer} onClose={closeViewer} />}
+
       {docs === null ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : docs.length === 0 ? (
@@ -185,7 +190,14 @@ export default function DocumentsPage() {
                 {doc.filename.split(".").pop()}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{doc.filename}</p>
+                <button
+                  onClick={() => setViewer({ documentId: doc.id })}
+                  disabled={doc.status !== "ready"}
+                  title={doc.status === "ready" ? "Read this document" : undefined}
+                  className="block max-w-full truncate text-left font-medium underline-offset-2 enabled:hover:text-primary-ink enabled:hover:underline"
+                >
+                  {doc.filename}
+                </button>
                 <StatusBadge doc={doc} />
               </div>
               <button

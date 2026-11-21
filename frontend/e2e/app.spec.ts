@@ -18,6 +18,8 @@ const FAKE_ANSWER = {
       page: null,
       title: null,
       url: null,
+      document_id: null as string | null,
+      chunk_id: null as string | null,
     },
   ],
   grounded: true,
@@ -27,48 +29,55 @@ const FAKE_ANSWER = {
   latency_ms: 1234,
 };
 
-// The streamed version of FAKE_ANSWER, as Server-Sent Events.
+// A chat answer as a stream of Server-Sent Events (steps, then text in pieces, then "done").
 function sse(event: string, data: object) {
-  return `event: ${event}
-data: ${JSON.stringify(data)}
-
-`;
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
-const FAKE_STREAM = [
-  sse("step", {
-    node: "retrieve",
-    label: "Searching your documents",
-    status: "running",
-  }),
-  sse("step", {
-    node: "retrieve",
-    label: "Searching your documents",
-    status: "done",
-    detail: "1 passage found",
-  }),
-  sse("step", {
-    node: "generate",
-    label: "Writing the answer",
-    status: "running",
-  }),
-  sse("token", { text: "Solar panels last " }),
-  sse("token", { text: "about **25 years** [1]." }),
-  sse("step", {
-    node: "generate",
-    label: "Writing the answer",
-    status: "done",
-  }),
-  sse("step", { node: "finalize", label: "Adding citations", status: "done" }),
-  sse("done", FAKE_ANSWER),
-].join("");
+function fakeStream(answer: typeof FAKE_ANSWER) {
+  return [
+    sse("step", {
+      node: "retrieve",
+      label: "Searching your documents",
+      status: "running",
+    }),
+    sse("step", {
+      node: "retrieve",
+      label: "Searching your documents",
+      status: "done",
+      detail: "1 passage found",
+    }),
+    sse("step", {
+      node: "generate",
+      label: "Writing the answer",
+      status: "running",
+    }),
+    sse("token", { text: "Solar panels last " }),
+    sse("token", { text: "about **25 years** [1]." }),
+    sse("step", {
+      node: "generate",
+      label: "Writing the answer",
+      status: "done",
+    }),
+    sse("step", {
+      node: "finalize",
+      label: "Adding citations",
+      status: "done",
+    }),
+    sse("done", answer),
+  ].join("");
+}
 
-async function fakeTheLLM(page: Page) {
+async function fakeTheLLM(
+  page: Page,
+  answer: typeof FAKE_ANSWER = FAKE_ANSWER,
+) {
   await page.route("**/api/chat/stream", (route) =>
-    route.fulfill({ contentType: "text/event-stream", body: FAKE_STREAM }),
+    route.fulfill({
+      contentType: "text/event-stream",
+      body: fakeStream(answer),
+    }),
   );
-  await page.route("**/api/chat", (route) =>
-    route.fulfill({ json: FAKE_ANSWER }),
-  );
+  await page.route("**/api/chat", (route) => route.fulfill({ json: answer }));
   await page.route("**/api/feedback", (route) =>
     route.fulfill({ status: 204 }),
   );
@@ -123,7 +132,27 @@ test("a new user can sign up, upload, chat, vote, delete and log out", async ({
   });
 
   await test.step("ask a question and see the answer with its source", async () => {
-    await fakeTheLLM(page);
+    // Point the fake answer's citation at the real uploaded passage, so "View in document"
+    // below is tested against the real backend.
+    const token = await page.evaluate(() => localStorage.getItem("rag_token"));
+    const auth = { Authorization: `Bearer ${token}` };
+    const [doc] = await (
+      await page.request.get("http://localhost:8000/api/documents", {
+        headers: auth,
+      })
+    ).json();
+    const text = await (
+      await page.request.get(
+        `http://localhost:8000/api/documents/${doc.id}/chunks`,
+        { headers: auth },
+      )
+    ).json();
+    const realCitation = {
+      ...FAKE_ANSWER.citations[0],
+      document_id: doc.id,
+      chunk_id: text.chunks[0].id,
+    };
+    await fakeTheLLM(page, { ...FAKE_ANSWER, citations: [realCitation] });
     await nav.getByRole("link", { name: "Chat", exact: true }).click();
     // The sources panel lists the uploaded document, ticked.
     const sources = page.getByRole("complementary", { name: "Your sources" });
@@ -157,6 +186,20 @@ test("a new user can sign up, upload, chat, vote, delete and log out", async ({
     await expect(
       page.getByRole("tooltip").filter({ visible: true }),
     ).toContainText("A typical solar panel lasts about 25 years.");
+  });
+
+  await test.step("open the cited passage in the document viewer", async () => {
+    await page.getByRole("button", { name: "View in document" }).click();
+    const viewer = page.getByRole("dialog", { name: "Document viewer" });
+    await expect(
+      viewer.getByRole("heading", { name: "solar-notes.txt" }),
+    ).toBeVisible();
+    await expect(viewer.getByText("Cited passage")).toBeVisible();
+    await expect(
+      viewer.getByText("A typical panel lasts about 25 years."),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(viewer).toBeHidden();
   });
 
   await test.step("copy and regenerate the answer", async () => {

@@ -71,6 +71,15 @@ export async function uploadDocument(file: File): Promise<DocumentItem> {
   return response.json();
 }
 
+// A document's text for the viewer: its passages in reading order.
+export type DocumentChunk = { id: string; chunk_index: number; page: number | null; content: string };
+
+export async function getDocumentText(
+  id: string,
+): Promise<{ document: DocumentItem; chunks: DocumentChunk[] }> {
+  return (await authFetch(`/api/documents/${id}/chunks`)).json();
+}
+
 // Same as uploadDocument, but reports progress (0-100). fetch can't report upload progress,
 // so this uses the older XMLHttpRequest, which can.
 export function uploadDocumentWithProgress(
@@ -123,6 +132,8 @@ export type Citation = {
   label: string; // "1", "2"... for documents, "W1", "W2"... for web results
   type: "document" | "web";
   snippet: string;
+  document_id?: string | null; // document citations: which document...
+  chunk_id?: string | null; // ...and which passage in it (for the document viewer)
   filename: string | null;
   page: number | null;
   title: string | null;

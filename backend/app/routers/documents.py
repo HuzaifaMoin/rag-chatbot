@@ -7,8 +7,8 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.deps import CurrentUser, SessionDep
 from app.ingestion import SUPPORTED_EXTENSIONS, ingest_document
-from app.models import Document
-from app.schemas import DocumentOut
+from app.models import Chunk, Document
+from app.schemas import ChunkOut, DocumentOut, DocumentText
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -59,6 +59,21 @@ async def list_documents(session: SessionDep, user: CurrentUser) -> list[Documen
 @router.get("/{document_id}", response_model=DocumentOut)
 async def get_document(document_id: uuid.UUID, session: SessionDep, user: CurrentUser) -> Document:
     return await _get_owned(session, user, document_id)
+
+
+@router.get("/{document_id}/chunks", response_model=DocumentText)
+async def get_document_text(
+    document_id: uuid.UUID, session: SessionDep, user: CurrentUser
+) -> DocumentText:
+    """The document's passages in reading order, for the document viewer."""
+    doc = await _get_owned(session, user, document_id)
+    chunks = await session.scalars(
+        select(Chunk).where(Chunk.document_id == doc.id).order_by(Chunk.chunk_index)
+    )
+    return DocumentText(
+        document=DocumentOut.model_validate(doc),
+        chunks=[ChunkOut.model_validate(c) for c in chunks],
+    )
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

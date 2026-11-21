@@ -4,6 +4,7 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import AgentSteps from "@/components/AgentSteps";
+import type { ViewerTarget } from "@/components/DocumentViewer";
 import { sendFeedback, type AgentStep, type ChatResponse, type Citation } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
@@ -42,9 +43,11 @@ function citationTitle(c: Citation): string {
 export default function ChatMessage({
   message,
   onRegenerate,
+  onOpenDocument,
 }: {
   message: Message;
   onRegenerate?: () => void; // only given for the latest answer
+  onOpenDocument?: (target: ViewerTarget) => void; // "View in document" on source cards
 }) {
   // Which citation was last clicked (its source card gets highlighted).
   const [active, setActive] = useState<string | null>(null);
@@ -130,6 +133,7 @@ export default function ChatMessage({
               id={`${idPrefix}-cite-${citation.label}`}
               citation={citation}
               highlighted={active === citation.label}
+              onOpenDocument={onOpenDocument}
             />
           ))}
         </ul>
@@ -303,11 +307,14 @@ function CitationItem({
   id,
   citation,
   highlighted,
+  onOpenDocument,
 }: {
   id: string;
   citation: Citation;
   highlighted: boolean;
+  onOpenDocument?: (target: ViewerTarget) => void;
 }) {
+  const documentId = citation.type === "document" ? citation.document_id : null;
   return (
     <li
       id={id}
@@ -333,6 +340,14 @@ function CitationItem({
         )}
       </div>
       <p className="mt-1.5 line-clamp-3 text-muted-foreground">{citation.snippet}</p>
+      {documentId && onOpenDocument && (
+        <button
+          onClick={() => onOpenDocument({ documentId, chunkId: citation.chunk_id })}
+          className="mt-2 font-medium text-primary-ink underline-offset-2 hover:underline"
+        >
+          View in document →
+        </button>
+      )}
     </li>
   );
 }

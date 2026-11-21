@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import AgentSteps from "@/components/AgentSteps";
 import ChatMessage, { type Message } from "@/components/ChatMessage";
 import ChatsList from "@/components/ChatsList";
+import DocumentViewer, { type ViewerTarget } from "@/components/DocumentViewer";
 import SourcesPanel from "@/components/SourcesPanel";
 import {
   deleteConversation,
@@ -83,6 +84,8 @@ export default function ChatPage() {
   // Sources the user unticked (like NotebookLM's checkboxes). Empty = use every document.
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [showPanel, setShowPanel] = useState(false); // the slide-over panel on phones
+  const [viewer, setViewer] = useState<ViewerTarget | null>(null); // open document, if any
+  const closeViewer = useCallback(() => setViewer(null), []);
   // The answer being streamed right now: the agent's steps so far and the text so far.
   const [live, setLive] = useState<{ steps: AgentStep[]; text: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -334,6 +337,8 @@ export default function ChatPage() {
         </div>
       )}
 
+      {viewer && <DocumentViewer target={viewer} onClose={closeViewer} />}
+
       <section className="flex min-w-0 flex-1 flex-col px-4 py-4">
         <header className="flex items-center justify-between gap-2 border-b pb-3">
           <div className="min-w-0">
@@ -400,6 +405,7 @@ export default function ChatPage() {
             <ChatMessage
               key={index}
               message={message}
+              onOpenDocument={setViewer}
               onRegenerate={
                 index === lastIndex && message.role === "assistant" && !loading ? regenerate : undefined
               }

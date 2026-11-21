@@ -55,6 +55,20 @@ async def test_delete_removes_document(client, user):
     assert gone.status_code == 404
 
 
+async def test_document_text_returns_passages_in_order(client, user):
+    long_text = "\n\n".join(f"Section {i}. " + ("Solar panels are great. " * 30) for i in range(6))
+    doc = await upload_text(client, user, "long.txt", long_text)
+    response = await client.get(f"/api/documents/{doc['id']}/chunks", headers=user["headers"])
+    assert response.status_code == 200
+    body = response.json()
+    assert body["document"]["filename"] == "long.txt"
+    chunks = body["chunks"]
+    assert len(chunks) == doc["num_chunks"] > 1
+    assert [c["chunk_index"] for c in chunks] == list(range(len(chunks)))
+    assert chunks[0]["content"].startswith("Section 0.")
+    assert chunks[0]["page"] is None  # text files have no pages
+
+
 # ---- User isolation (security) ----
 
 
@@ -78,3 +92,9 @@ async def test_other_user_cannot_delete_my_document(client, user, other_user):
     # ...and it's still there for the owner.
     still_there = await client.get(f"/api/documents/{doc['id']}", headers=user["headers"])
     assert still_there.status_code == 200
+
+
+async def test_other_user_cannot_read_my_document_text(client, user, other_user):
+    doc = await upload_text(client, user, "private.txt", "My private notes.")
+    response = await client.get(f"/api/documents/{doc['id']}/chunks", headers=other_user["headers"])
+    assert response.status_code == 404
