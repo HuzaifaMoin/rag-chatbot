@@ -18,6 +18,7 @@ import re
 import uuid
 from typing import Any, Literal, TypedDict
 
+import groq
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -145,6 +146,28 @@ async def _traced_web_search(query: str) -> list[dict[str, str]]:
     return await search_web(query)
 
 
+class MalformedToolCallError(Exception):
+    """The model kept calling a tool with the wrong arguments (Groq rejects the call)."""
+
+
+def _is_malformed_tool_call(error: Exception) -> bool:
+    # gpt-oss sometimes calls web_search in its own built-in format, e.g.
+    # {"cursor": 1, "id": 6} instead of {"query": ...}; Groq rejects it with this code.
+    return isinstance(error, groq.BadRequestError) and "tool_use_failed" in str(error)
+
+
+async def _invoke_with_tool_retry(llm, messages: list[BaseMessage], attempts: int = 2) -> AIMessage:
+    """Call the model; if it produces a malformed tool call, try again (it's random)."""
+    for attempt in range(attempts):
+        try:
+            return await llm.ainvoke(messages)
+        except groq.BadRequestError as e:
+            if not _is_malformed_tool_call(e):
+                raise
+            log.warning("malformed tool call (attempt %d/%d): %s", attempt + 1, attempts, e)
+    raise MalformedToolCallError
+
+
 async def run_tool_loop(
     messages: list[BaseMessage],
     tools: list[BaseTool],
@@ -155,7 +178,12 @@ async def run_tool_loop(
     labels ([W1], [W2]...) stay unique across calls and map back to URLs."""
     llm = answer_llm().bind_tools(tools)
     for _ in range(get_settings().max_tool_steps):
-        ai: AIMessage = await llm.ainvoke(messages)
+        try:
+            ai: AIMessage = await _invoke_with_tool_retry(llm, messages)
+        except MalformedToolCallError:
+            if not web_results:
+                raise  # nothing gathered yet: let the caller give an honest fallback
+            break  # we have some results: answer from them below
         messages.append(ai)
         if not ai.tool_calls:
             return str(ai.content).strip()
@@ -328,6 +356,8 @@ the answer to this question, so you may use tools:
 - calculator: for any arithmetic.
 
 Rules:
+- ALWAYS use the calculator for arithmetic, even simple sums or percentages. Never work \
+out numbers in your head: language models make arithmetic mistakes.
 - Ground factual claims in web results and cite them inline like [W1] or [W2, W3].
 - Don't state facts from memory without searching first. Simple greetings or pure maths \
 need no web search.
@@ -345,7 +375,11 @@ async def tool_agent(state: AgentState) -> AgentState:
     ]
     web_results: list[dict[str, str]] = []
     tools_used = list(state.get("tools_used") or [])
-    answer = await run_tool_loop(messages, [web_search, calculator], web_results, tools_used)
+    try:
+        answer = await run_tool_loop(messages, [web_search, calculator], web_results, tools_used)
+    except MalformedToolCallError:
+        # The model couldn't use its tools properly: be honest instead of crashing with a 502.
+        return {"answer": FALLBACK_ANSWER, "source": "none", "context": [], "grounded": None}
     if web_search.name in tools_used:
         source: Source = "web"
     elif calculator.name in tools_used:
@@ -366,9 +400,14 @@ async def fallback(state: AgentState) -> AgentState:
     return {"answer": FALLBACK_ANSWER, "source": "none", "context": []}
 
 
+_CITATION_SUFFIX_RE = re.compile(r"\[(W?\d+)†[^\]]*\]")
+
+
 def normalize_citations(answer: str) -> str:
-    """gpt-oss sometimes cites with CJK brackets: 【1】 -> [1]."""
-    return answer.replace("【", "[").replace("】", "]")
+    """gpt-oss sometimes cites in its own formats: 【1】 -> [1] and [1†L1-L9] -> [1].
+    Without this, the citation isn't recognised and a correct answer loses its source."""
+    answer = answer.replace("【", "[").replace("】", "]")
+    return _CITATION_SUFFIX_RE.sub(r"[\1]", answer)
 
 
 async def finalize(state: AgentState) -> AgentState:
