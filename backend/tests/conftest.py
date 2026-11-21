@@ -6,6 +6,7 @@ If Postgres isn't running, the integration tests are skipped (unit tests still r
 """
 
 import asyncio
+import json
 import os
 import uuid
 
@@ -141,3 +142,49 @@ def fake_agent(monkeypatch):
 
     monkeypatch.setattr(chat_router, "run_agent", fake_run_agent)
     return calls
+
+
+# ---- Streaming chat fakes (used by the stream and conversation tests) ----
+
+FINAL_STATE = {
+    "answer": "Solar panels last about 25 years [1].",
+    "source": "documents",
+    "citations": [
+        {
+            "label": "1",
+            "type": "document",
+            "snippet": "Panels last 25 years.",
+            "filename": "solar.txt",
+        }
+    ],
+    "grounded": True,
+    "tools_used": [],
+    "search_query": "solar panel lifespan",
+}
+
+
+def parse_sse(body: str) -> list[tuple[str, dict]]:
+    """'event: x\\ndata: {...}\\n\\n' blocks -> [(x, {...}), ...]"""
+    events = []
+    for block in body.strip().split("\n\n"):
+        lines = dict(line.split(": ", 1) for line in block.splitlines())
+        events.append((lines["event"], json.loads(lines["data"])))
+    return events
+
+
+@pytest.fixture
+def fake_stream(monkeypatch):
+    run_id = uuid.uuid4()
+
+    async def fake_stream_agent(*, question, owner_id, history, document_ids, thread_id):
+        yield {"type": "step", "node": "retrieve", "label": "Searching", "status": "running"}
+        yield {"type": "step", "node": "retrieve", "label": "Searching", "status": "done",
+               "detail": "5 passages found"}  # fmt: skip
+        yield {"type": "token", "text": "Solar panels "}
+        yield {"type": "reset"}
+        yield {"type": "token", "text": "Solar panels last about 25 years [1]."}
+        yield {"type": "final", "state": FINAL_STATE, "run_id": run_id,
+               "thread_id": thread_id or "new-thread"}  # fmt: skip
+
+    monkeypatch.setattr(chat_router, "stream_agent", fake_stream_agent)
+    return run_id

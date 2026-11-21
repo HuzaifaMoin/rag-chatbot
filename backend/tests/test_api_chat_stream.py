@@ -1,58 +1,13 @@
 """Streaming chat (POST /api/chat/stream): endpoint tests with a fake agent, plus unit
 tests for the pieces that shape the stream (answer text filter, step labels)."""
 
-import json
-import uuid
-
 import pytest
 
 from app.agent.graph import NOT_FOUND, AnswerStreamFilter, step_detail
 from app.db import SessionLocal
 from app.models import ChatRun
 from app.routers import chat as chat_router
-
-FINAL_STATE = {
-    "answer": "Solar panels last about 25 years [1].",
-    "source": "documents",
-    "citations": [
-        {
-            "label": "1",
-            "type": "document",
-            "snippet": "Panels last 25 years.",
-            "filename": "solar.txt",
-        }
-    ],
-    "grounded": True,
-    "tools_used": [],
-    "search_query": "solar panel lifespan",
-}
-
-
-def parse_sse(body: str) -> list[tuple[str, dict]]:
-    """'event: x\\ndata: {...}\\n\\n' blocks -> [(x, {...}), ...]"""
-    events = []
-    for block in body.strip().split("\n\n"):
-        lines = dict(line.split(": ", 1) for line in block.splitlines())
-        events.append((lines["event"], json.loads(lines["data"])))
-    return events
-
-
-@pytest.fixture
-def fake_stream(monkeypatch):
-    run_id = uuid.uuid4()
-
-    async def fake_stream_agent(*, question, owner_id, history, document_ids, thread_id):
-        yield {"type": "step", "node": "retrieve", "label": "Searching", "status": "running"}
-        yield {"type": "step", "node": "retrieve", "label": "Searching", "status": "done",
-               "detail": "5 passages found"}  # fmt: skip
-        yield {"type": "token", "text": "Solar panels "}
-        yield {"type": "reset"}
-        yield {"type": "token", "text": "Solar panels last about 25 years [1]."}
-        yield {"type": "final", "state": FINAL_STATE, "run_id": run_id,
-               "thread_id": thread_id or "new-thread"}  # fmt: skip
-
-    monkeypatch.setattr(chat_router, "stream_agent", fake_stream_agent)
-    return run_id
+from tests.conftest import FINAL_STATE, parse_sse
 
 
 async def test_stream_sends_steps_tokens_and_done(client, user, fake_stream):
@@ -69,7 +24,7 @@ async def test_stream_sends_steps_tokens_and_done(client, user, fake_stream):
     assert done["answer"] == FINAL_STATE["answer"]
     assert done["citations"][0]["filename"] == "solar.txt"
     assert done["run_id"] == str(fake_stream)
-    assert done["thread_id"] == "new-thread"
+    assert done["thread_id"] == done["conversation_id"]
 
 
 async def test_streamed_answer_can_be_rated(client, user, fake_stream):

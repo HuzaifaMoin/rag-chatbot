@@ -138,18 +138,32 @@ export type ChatResponse = {
   thread_id: string;
   run_id: string;
   latency_ms: number;
+  conversation_id?: string | null; // the saved chat this answer belongs to
 };
 
-export async function sendChat(
-  message: string,
-  history: ChatTurn[],
-  threadId: string | null,
-  documentIds: string[] | null = null, // null = search all your documents
-): Promise<ChatResponse> {
+// What every chat request can carry besides the question.
+export type ChatOptions = {
+  conversationId: string | null; // continue a saved chat (null = start a new one)
+  history: ChatTurn[]; // only used for a new chat; saved chats load their own history
+  documentIds: string[] | null; // null = search all your documents
+  replaceLast?: boolean; // Regenerate: replace the chat's last question + answer
+};
+
+function chatBody(message: string, o: ChatOptions): string {
+  return JSON.stringify({
+    message,
+    history: o.history,
+    conversation_id: o.conversationId,
+    document_ids: o.documentIds,
+    replace_last: o.replaceLast ?? false,
+  });
+}
+
+export async function sendChat(message: string, options: ChatOptions): Promise<ChatResponse> {
   const response = await authFetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, thread_id: threadId, document_ids: documentIds }),
+    body: chatBody(message, options),
   });
   return response.json();
 }
@@ -177,9 +191,7 @@ export class StreamUnavailableError extends Error {}
 // The browser's EventSource only does GET, and we need POST, so we read the stream ourselves.
 export async function streamChat(
   message: string,
-  history: ChatTurn[],
-  threadId: string | null,
-  documentIds: string[] | null,
+  options: ChatOptions,
   handlers: StreamHandlers,
 ): Promise<ChatResponse> {
   let response: Response;
@@ -187,7 +199,7 @@ export async function streamChat(
     response = await authFetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history, thread_id: threadId, document_ids: documentIds }),
+      body: chatBody(message, options),
     });
   } catch (err) {
     if (err instanceof UnauthorizedError) throw err;
@@ -231,6 +243,38 @@ export async function sendFeedback(runId: string, score: 0 | 1, comment?: string
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ run_id: runId, score, comment: comment || null }),
   });
+}
+
+// ---- Saved chats ----
+
+export type ConversationSummary = { id: string; title: string; updated_at: string };
+
+export type SavedMessage = {
+  role: "user" | "assistant";
+  content: string;
+  response: (ChatResponse & { steps?: AgentStep[] }) | null;
+};
+
+export async function listConversations(): Promise<ConversationSummary[]> {
+  return (await authFetch("/api/conversations")).json();
+}
+
+export async function getConversation(
+  id: string,
+): Promise<ConversationSummary & { messages: SavedMessage[] }> {
+  return (await authFetch(`/api/conversations/${id}`)).json();
+}
+
+export async function renameConversation(id: string, title: string): Promise<void> {
+  await authFetch(`/api/conversations/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await authFetch(`/api/conversations/${id}`, { method: "DELETE" });
 }
 
 // ---- Auth ----

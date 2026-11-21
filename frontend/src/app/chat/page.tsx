@@ -1,26 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import AgentSteps from "@/components/AgentSteps";
 import ChatMessage, { type Message } from "@/components/ChatMessage";
+import ChatsList from "@/components/ChatsList";
 import SourcesPanel from "@/components/SourcesPanel";
 import {
+  deleteConversation,
+  getConversation,
+  listConversations,
   listDocuments,
+  renameConversation,
   sendChat,
   streamChat,
   StreamUnavailableError,
   UnauthorizedError,
   type AgentStep,
+  type ChatOptions,
   type ChatResponse,
   type ChatTurn,
+  type ConversationSummary,
   type DocumentItem,
 } from "@/lib/api";
+import { toast } from "@/lib/toast";
 
-// The backend accepts up to 40 earlier turns; we send the most recent 20.
+// The backend accepts up to 40 earlier turns; we send the most recent 20 (new chats only).
 const MAX_HISTORY = 20;
+const LAST_CHAT_KEY = "rag_last_chat"; // reopen the chat you were in after a refresh
 
 const SUGGESTIONS = [
   "Summarise my documents in a few bullet points",
@@ -45,38 +54,106 @@ function toHistory(messages: Message[]): ChatTurn[] {
   return messages.slice(-MAX_HISTORY).map((m) => ({ role: m.role, content: m.content }));
 }
 
+function remember(id: string | null) {
+  try {
+    if (id) localStorage.setItem(LAST_CHAT_KEY, id);
+    else localStorage.removeItem(LAST_CHAT_KEY);
+  } catch {
+    // storage blocked: the chat still works, it just won't reopen after a refresh
+  }
+}
+
+function recall(): string | null {
+  try {
+    return localStorage.getItem(LAST_CHAT_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [chats, setChats] = useState<ConversationSummary[] | null>(null);
   const [docs, setDocs] = useState<DocumentItem[] | null>(null);
   // Sources the user unticked (like NotebookLM's checkboxes). Empty = use every document.
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [showSources, setShowSources] = useState(false); // the slide-over panel on phones
+  const [showPanel, setShowPanel] = useState(false); // the slide-over panel on phones
   // The answer being streamed right now: the agent's steps so far and the text so far.
   const [live, setLive] = useState<{ steps: AgentStep[]; text: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load the user's documents for the sources panel. Also our login check: 401 -> login page.
+  const handleAuth = useCallback(
+    (err: unknown) => {
+      if (err instanceof UnauthorizedError) router.push("/login");
+      return err instanceof UnauthorizedError;
+    },
+    [router],
+  );
+
+  const refreshChats = useCallback(() => {
+    return listConversations()
+      .then((list) => {
+        setChats(list);
+        return list;
+      })
+      .catch((err) => {
+        if (!handleAuth(err)) setChats([]);
+        return [] as ConversationSummary[];
+      });
+  }, [handleAuth]);
+
+  // Open a saved chat: load its messages (answers come back with their sources and steps).
+  const openChat = useCallback(
+    async (id: string) => {
+      try {
+        const chat = await getConversation(id);
+        setMessages(
+          chat.messages.map((m): Message =>
+            m.role === "assistant" && m.response
+              ? { role: "assistant", content: m.content, response: m.response, steps: m.response.steps }
+              : { role: "user", content: m.content },
+          ),
+        );
+        setConversationId(id);
+        setError("");
+        setShowPanel(false);
+        remember(id);
+      } catch (err) {
+        if (!handleAuth(err)) {
+          remember(null); // it was deleted: forget it
+          toast("That chat couldn't be opened", "error");
+        }
+      }
+    },
+    [handleAuth],
+  );
+
+  // On load: documents for the sources panel (also our login check), saved chats, and
+  // reopen the chat you were in before a refresh.
   useEffect(() => {
     listDocuments()
       .then(setDocs)
       .catch((err) => {
-        if (err instanceof UnauthorizedError) router.push("/login");
-        else setDocs([]);
+        if (!handleAuth(err)) setDocs([]);
       });
-  }, [router]);
+    refreshChats().then((list) => {
+      const last = recall();
+      if (last && list.some((c) => c.id === last)) openChat(last);
+    });
+  }, [handleAuth, refreshChats, openChat]);
 
   // Whenever the message list changes, scroll so the newest message is visible.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading, live]);
 
-  // Keyboard shortcuts: "/" jumps to the question box, Esc closes the sources panel.
+  // Keyboard shortcuts: "/" jumps to the question box, Esc closes the side panel.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const typing = (event.target as HTMLElement)?.closest("input, textarea, [contenteditable]");
@@ -84,7 +161,7 @@ export default function ChatPage() {
         event.preventDefault();
         inputRef.current?.focus();
       } else if (event.key === "Escape") {
-        setShowSources(false);
+        setShowPanel(false);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -105,9 +182,15 @@ export default function ChatPage() {
   }
 
   // Ask the backend. `earlier` is the conversation before this question.
-  async function ask(question: string, earlier: Message[]) {
-    // Only send a list when the user narrowed it down; null means "all my documents".
-    const documentIds = excluded.size > 0 ? selectedDocs.map((d) => d.id) : null;
+  async function ask(question: string, earlier: Message[], replaceLast = false) {
+    const options: ChatOptions = {
+      conversationId,
+      // Saved chats load their own history on the server; a new chat sends what's on screen.
+      history: conversationId ? [] : toHistory(earlier),
+      // Only send a list when the user narrowed it down; null means "all my documents".
+      documentIds: excluded.size > 0 ? selectedDocs.map((d) => d.id) : null,
+      replaceLast,
+    };
     setMessages([...earlier, { role: "user", content: question }]);
     setError("");
     setLoading(true);
@@ -117,7 +200,7 @@ export default function ChatPage() {
       let started = false; // did any event arrive? (if not, we can quietly fall back)
       let response: ChatResponse;
       try {
-        response = await streamChat(question, toHistory(earlier), threadId, documentIds, {
+        response = await streamChat(question, options, {
           onStep: (step) => {
             started = true;
             steps = upsertStep(steps, step);
@@ -132,18 +215,19 @@ export default function ChatPage() {
       } catch (err) {
         // Streaming not available (old backend, proxy...): use the normal endpoint instead.
         if (!(err instanceof StreamUnavailableError) || started) throw err;
-        response = await sendChat(question, toHistory(earlier), threadId, documentIds);
+        response = await sendChat(question, options);
       }
-      setThreadId(response.thread_id);
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: response.answer, response, steps: steps.length ? steps : undefined },
       ]);
-    } catch (err) {
-      if (err instanceof UnauthorizedError) {
-        router.push("/login");
-        return;
+      if (response.conversation_id) {
+        setConversationId(response.conversation_id);
+        remember(response.conversation_id);
+        refreshChats(); // new chat appears / moves to the top
       }
+    } catch (err) {
+      if (handleAuth(err)) return;
       // Take the unanswered question back out of the list and put it back in the box.
       setMessages(earlier);
       setInput(question);
@@ -161,11 +245,11 @@ export default function ChatPage() {
     ask(question, messages);
   }
 
-  // Ask the last question again (drops the last answer, keeps everything before it).
+  // Ask the last question again: the old answer is replaced (on screen and in the saved chat).
   function regenerate() {
     const lastUser = messages.findLastIndex((m) => m.role === "user");
     if (lastUser === -1 || loading) return;
-    ask(messages[lastUser].content, messages.slice(0, lastUser));
+    ask(messages[lastUser].content, messages.slice(0, lastUser), true);
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -178,33 +262,69 @@ export default function ChatPage() {
 
   function newChat() {
     setMessages([]);
-    setThreadId(null);
+    setConversationId(null);
     setError("");
+    setShowPanel(false);
+    remember(null);
     inputRef.current?.focus();
   }
 
+  async function rename(id: string, title: string) {
+    try {
+      await renameConversation(id, title);
+      setChats((prev) => prev?.map((c) => (c.id === id ? { ...c, title } : c)) ?? prev);
+    } catch (err) {
+      if (!handleAuth(err)) toast("Couldn't rename the chat", "error");
+    }
+  }
+
+  async function remove(chat: ConversationSummary) {
+    if (!confirm(`Delete the chat "${chat.title}"?`)) return;
+    try {
+      await deleteConversation(chat.id);
+      setChats((prev) => prev?.filter((c) => c.id !== chat.id) ?? prev);
+      if (chat.id === conversationId) newChat();
+      toast("Chat deleted");
+    } catch (err) {
+      if (!handleAuth(err)) toast("Couldn't delete the chat", "error");
+    }
+  }
+
   const lastIndex = messages.length - 1;
-  const panel = <SourcesPanel docs={docs} excluded={excluded} onToggle={toggle} />;
+  const panel = (
+    <div className="flex min-h-0 flex-1 flex-col gap-6">
+      <div className="max-h-[45%] min-h-0 shrink-0 overflow-hidden">
+        <ChatsList
+          chats={chats}
+          activeId={conversationId}
+          onOpen={openChat}
+          onRename={rename}
+          onDelete={remove}
+        />
+      </div>
+      <SourcesPanel docs={docs} excluded={excluded} onToggle={toggle} />
+    </div>
+  );
 
   return (
     // Full screen height minus the 3.5rem (h-14) nav bar, so the text box stays visible.
     <main className="mx-auto flex h-[calc(100dvh-3.5rem)] w-full max-w-6xl">
-      {/* Sources panel: a sidebar on wide screens... */}
-      <aside aria-label="Your sources" className="hidden w-72 shrink-0 border-r px-4 py-5 lg:flex">
+      {/* Chats + sources: a sidebar on wide screens... */}
+      <aside aria-label="Your sources" className="hidden w-72 shrink-0 flex-col border-r px-4 py-5 lg:flex">
         {panel}
       </aside>
 
       {/* ...and a slide-over on phones (a permanent side panel would squeeze the chat). */}
-      {showSources && (
-        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="Sources">
+      {showPanel && (
+        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="Chats and sources">
           <button
-            aria-label="Close sources"
-            onClick={() => setShowSources(false)}
+            aria-label="Close panel"
+            onClick={() => setShowPanel(false)}
             className="absolute inset-0 bg-black/40"
           />
           <div className="absolute inset-y-0 left-0 flex w-[min(20rem,85vw)] flex-col gap-3 border-r bg-background px-4 py-5 shadow-xl">
             <button
-              onClick={() => setShowSources(false)}
+              onClick={() => setShowPanel(false)}
               className="self-end rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
             >
               Close ✕
@@ -217,7 +337,9 @@ export default function ChatPage() {
       <section className="flex min-w-0 flex-1 flex-col px-4 py-4">
         <header className="flex items-center justify-between gap-2 border-b pb-3">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold">Chat</h1>
+            <h1 className="truncate text-2xl font-semibold">
+              {chats?.find((c) => c.id === conversationId)?.title ?? "Chat"}
+            </h1>
             {readyDocs.length > 0 && (
               <p className="text-xs text-muted-foreground">
                 Searching {selectedDocs.length} of {readyDocs.length}{" "}
@@ -225,17 +347,12 @@ export default function ChatPage() {
               </p>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
-              onClick={() => setShowSources(true)}
+              onClick={() => setShowPanel(true)}
               className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted lg:hidden"
             >
-              Sources
-              {readyDocs.length > 0 && (
-                <span className="ml-1.5 text-muted-foreground">
-                  {selectedDocs.length}/{readyDocs.length}
-                </span>
-              )}
+              Chats & sources
             </button>
             <button
               onClick={newChat}

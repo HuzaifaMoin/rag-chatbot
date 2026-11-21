@@ -60,6 +60,11 @@ class ChatRequest(BaseModel):
     history: list[ChatTurn] = Field(default_factory=list, max_length=40)
     document_ids: list[uuid.UUID] | None = None
     thread_id: str | None = Field(default=None, max_length=100)
+    # Continue a saved chat: the backend loads its history (and ignores `history`).
+    # Leave empty to start a new conversation.
+    conversation_id: uuid.UUID | None = None
+    # Regenerate: drop the chat's last question + answer first, then ask again.
+    replace_last: bool = False
 
 
 class Citation(BaseModel):
@@ -86,9 +91,33 @@ class ChatResponse(BaseModel):
     thread_id: str
     run_id: uuid.UUID  # LangSmith trace id, used for feedback
     latency_ms: int
+    conversation_id: uuid.UUID | None = None  # the saved chat this answer belongs to
 
 
 class FeedbackRequest(BaseModel):
     run_id: uuid.UUID
     score: Literal[0, 1]  # 1 = 👍, 0 = 👎
     comment: str | None = Field(default=None, max_length=1000)  # optional "what was wrong?"
+
+
+class ConversationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatMessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    role: Literal["user", "assistant"]
+    content: str
+    response: dict | None  # ChatResponse fields (+ "steps") for answers
+
+
+class ConversationDetail(ConversationOut):
+    messages: list[ChatMessageOut]
+
+
+class ConversationRename(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
