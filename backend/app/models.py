@@ -94,3 +94,16 @@ class Chunk(Base):
         ),
         Index("ix_chunks_content_tsv", "content_tsv", postgresql_using="gin"),
     )
+
+
+class ChatRun(Base):
+    """One answered chat question. Remembers who asked, so only they can rate the answer."""
+
+    __tablename__ = "chat_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)  # LangSmith run id
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1 = 👍, 0 = 👎
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -86,3 +86,8 @@ class ChatResponse(BaseModel):
     thread_id: str
     run_id: uuid.UUID  # LangSmith trace id, used for feedback
     latency_ms: int
+
+
+class FeedbackRequest(BaseModel):
+    run_id: uuid.UUID
+    score: Literal[0, 1]  # 1 = 👍, 0 = 👎

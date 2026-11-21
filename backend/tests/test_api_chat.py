@@ -7,38 +7,7 @@ The real LLM's answer quality is measured by the evals (Step 4.4), not by these 
 
 import uuid
 
-import pytest
-
 from app.routers import chat as chat_router
-
-
-@pytest.fixture
-def fake_agent(monkeypatch):
-    """Replace the real agent with one that returns a fixed answer and records what it got."""
-    calls = []
-
-    async def fake_run_agent(*, question, owner_id, history, document_ids, thread_id):
-        calls.append({"question": question, "owner_id": owner_id, "history": history})
-        state = {
-            "answer": "Solar panels last about 25 years [1].",
-            "source": "documents",
-            "citations": [
-                {
-                    "label": "1",
-                    "type": "document",
-                    "snippet": "A typical solar panel lasts about 25 years.",
-                    "filename": "solar.txt",
-                    "page": None,
-                }
-            ],
-            "grounded": True,
-            "tools_used": [],
-            "search_query": "solar panel lifespan",
-        }
-        return state, uuid.uuid4(), thread_id or "new-thread-id"
-
-    monkeypatch.setattr(chat_router, "run_agent", fake_run_agent)
-    return calls
 
 
 async def test_chat_returns_answer_with_citations(client, user, fake_agent):

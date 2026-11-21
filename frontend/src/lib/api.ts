@@ -115,6 +115,15 @@ export async function sendChat(
   return response.json();
 }
 
+// Rate an answer: 1 = 👍, 0 = 👎. Voting again changes the vote.
+export async function sendFeedback(runId: string, score: 0 | 1): Promise<void> {
+  await authFetch("/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: runId, score }),
+  });
+}
+
 // ---- Auth ----
 
 // Sign up. The backend wants JSON and replies with a token.

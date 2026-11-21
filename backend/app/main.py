@@ -9,7 +9,7 @@ from langchain_core.tracers.langchain import wait_for_all_tracers
 from app.config import get_settings
 from app.db import init_db
 from app.embeddings import warm_up
-from app.routers import auth, chat, documents, search
+from app.routers import auth, chat, documents, feedback, search
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -37,6 +37,7 @@ app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(chat.router)
+app.include_router(feedback.router)
 
 
 @app.get("/api/health", tags=["meta"])

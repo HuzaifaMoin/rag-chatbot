@@ -1,6 +1,9 @@
+"use client";
+
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatResponse, Citation } from "@/lib/api";
+import { sendFeedback, type ChatResponse, type Citation } from "@/lib/api";
 
 // A message in the chat. Bot messages also carry the full backend response
 // (source, citations...); user messages only have text.
@@ -56,6 +59,7 @@ export default function ChatMessage({ message }: { message: Message }) {
           </span>
         )}
         <span className="text-zinc-500">{(response.latency_ms / 1000).toFixed(1)}s</span>
+        <FeedbackButtons runId={response.run_id} />
       </div>
 
       {response.citations.length > 0 && (
@@ -66,6 +70,53 @@ export default function ChatMessage({ message }: { message: Message }) {
         </ul>
       )}
     </div>
+  );
+}
+
+// 👍 / 👎 under each answer. The vote is saved by the backend and attached to the
+// answer's LangSmith trace, so bad answers can be debugged step by step.
+function FeedbackButtons({ runId }: { runId: string }) {
+  const [vote, setVote] = useState<0 | 1 | null>(null);
+  const [error, setError] = useState(false);
+
+  async function rate(score: 0 | 1) {
+    if (score === vote) return;
+    const previous = vote;
+    setVote(score); // highlight straight away...
+    setError(false);
+    try {
+      await sendFeedback(runId, score);
+    } catch {
+      setVote(previous); // ...and undo it if saving failed
+      setError(true);
+    }
+  }
+
+  const base = "rounded px-1.5 py-0.5 transition";
+  const off = "opacity-50 grayscale hover:opacity-100 hover:grayscale-0";
+  const on = "bg-zinc-200 dark:bg-zinc-800";
+
+  return (
+    <span className="ml-auto flex items-center gap-1">
+      <button
+        onClick={() => rate(1)}
+        aria-label="Good answer"
+        aria-pressed={vote === 1}
+        className={`${base} ${vote === 1 ? on : off}`}
+      >
+        👍
+      </button>
+      <button
+        onClick={() => rate(0)}
+        aria-label="Bad answer"
+        aria-pressed={vote === 0}
+        className={`${base} ${vote === 0 ? on : off}`}
+      >
+        👎
+      </button>
+      {vote !== null && !error && <span className="text-zinc-500">Thanks for the feedback</span>}
+      {error && <span className="text-red-600">Couldn&apos;t save</span>}
+    </span>
   );
 }
 

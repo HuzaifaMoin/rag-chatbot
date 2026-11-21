@@ -3,14 +3,15 @@ import time
 from fastapi import APIRouter, HTTPException, status
 
 from app.agent.graph import run_agent
-from app.deps import CurrentUser
+from app.deps import CurrentUser, SessionDep
+from app.models import ChatRun
 from app.schemas import ChatRequest, ChatResponse, Citation
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 @router.post("", response_model=ChatResponse)
-async def chat(body: ChatRequest, user: CurrentUser) -> ChatResponse:
+async def chat(body: ChatRequest, user: CurrentUser, session: SessionDep) -> ChatResponse:
     """Ask a question. Answers come from your documents (with citations); if they
     don't cover it, the agent falls back to web search / calculator and says so."""
     started = time.perf_counter()
@@ -27,6 +28,11 @@ async def chat(body: ChatRequest, user: CurrentUser) -> ChatResponse:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY, "The language model is unavailable. Try again shortly."
         ) from e
+
+    # Remember who asked, so only this user can rate the answer (POST /api/feedback).
+    session.add(ChatRun(id=run_id, owner_id=user.id))
+    await session.commit()
+
     return ChatResponse(
         answer=state["answer"],
         source=state["source"],
