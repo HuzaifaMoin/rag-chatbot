@@ -97,8 +97,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Next.js generates some global types (e.g. LayoutProps) into .next/. A fresh checkout
+      # doesn't have them yet, so generate them first.
       - name: Type-check
-        run: npx tsc --noEmit
+        run: |
+          npx next typegen
+          npx tsc --noEmit
 
       - name: Production build
         run: npm run build
