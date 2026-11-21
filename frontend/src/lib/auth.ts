@@ -1,0 +1,14 @@
+// The login token lives in the browser's localStorage under this name.
+const TOKEN_KEY = "rag_token";
+
+export function saveToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
