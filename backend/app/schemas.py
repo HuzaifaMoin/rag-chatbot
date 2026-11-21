@@ -91,3 +91,4 @@ class ChatResponse(BaseModel):
 class FeedbackRequest(BaseModel):
     run_id: uuid.UUID
     score: Literal[0, 1]  # 1 = 👍, 0 = 👎
+    comment: str | None = Field(default=None, max_length=1000)  # optional "what was wrong?"

@@ -14,8 +14,11 @@ def langsmith_calls(monkeypatch):
     """Replace the LangSmith upload with a fake that records what it would have sent."""
     calls = []
 
-    def fake_send(run_id, score, first_vote):
-        calls.append({"run_id": run_id, "score": score, "first_vote": first_vote})
+    def fake_send(run_id, score, first_vote, comment=None):
+        call = {"run_id": run_id, "score": score, "first_vote": first_vote}
+        if comment:
+            call["comment"] = comment
+        calls.append(call)
 
     monkeypatch.setattr(feedback_router, "send_to_langsmith", fake_send)
     return calls
@@ -56,6 +59,33 @@ async def test_changing_my_vote_updates_instead_of_duplicating(
     assert await saved_score(run_id) == 0
     # First vote creates the LangSmith feedback, the second only updates it.
     assert [c["first_vote"] for c in langsmith_calls] == [True, False]
+
+
+async def test_thumbs_down_with_a_reason(client, user, fake_agent, langsmith_calls):
+    run_id = await ask(client, user)
+    await client.post("/api/feedback", headers=user["headers"], json={"run_id": run_id, "score": 0})
+    response = await client.post(
+        "/api/feedback",
+        headers=user["headers"],
+        json={"run_id": run_id, "score": 0, "comment": "  Cited the wrong section  "},
+    )
+    assert response.status_code == 204
+    assert langsmith_calls[-1] == {
+        "run_id": uuid.UUID(run_id),
+        "score": 0,
+        "first_vote": False,
+        "comment": "Cited the wrong section",
+    }
+
+
+async def test_comment_length_is_limited(client, user, fake_agent, langsmith_calls):
+    run_id = await ask(client, user)
+    response = await client.post(
+        "/api/feedback",
+        headers=user["headers"],
+        json={"run_id": run_id, "score": 0, "comment": "x" * 1001},
+    )
+    assert response.status_code == 422
 
 
 async def test_cannot_rate_someone_elses_answer(

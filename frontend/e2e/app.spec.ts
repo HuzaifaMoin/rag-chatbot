@@ -32,7 +32,8 @@ async function fakeTheLLM(page: Page) {
   await page.route("**/api/feedback", (route) => route.fulfill({ status: 204 }));
 }
 
-test("a new user can sign up, upload, chat, vote, delete and log out", async ({ page }) => {
+test("a new user can sign up, upload, chat, vote, delete and log out", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const email = `e2e-${Date.now()}@example.com`;
   const nav = page.getByRole("banner");
 
@@ -63,9 +64,11 @@ test("a new user can sign up, upload, chat, vote, delete and log out", async ({ 
         "Solar panels convert sunlight into electricity. A typical panel lasts about 25 years.",
       ),
     });
-    await page.getByRole("button", { name: "Upload" }).click();
-    await expect(page.getByText("solar-notes.txt")).toBeVisible();
-    await expect(page.getByText(/Ready · \d+ chunk/)).toBeVisible({ timeout: 60_000 });
+    // Uploads start as soon as a file is chosen, and a toast confirms it.
+    await expect(page.getByRole("status").filter({ hasText: "Uploaded solar-notes.txt" })).toBeVisible();
+    const list = page.getByRole("list", { name: "Your documents" });
+    await expect(list.getByText("solar-notes.txt")).toBeVisible();
+    await expect(list.getByText(/Ready · \d+ chunk/)).toBeVisible({ timeout: 60_000 });
   });
 
   await test.step("ask a question and see the answer with its source", async () => {
@@ -93,11 +96,36 @@ test("a new user can sign up, upload, chat, vote, delete and log out", async ({ 
     );
   });
 
-  await test.step("rate the answer", async () => {
+  await test.step("copy and regenerate the answer", async () => {
+    await page.getByRole("button", { name: "Copy" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Copied to clipboard" })).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain("25 years");
+
+    await page.getByRole("button", { name: "Regenerate" }).click();
+    // Still one question and one answer (the old answer was replaced, not added to).
+    await expect(page.locator("strong", { hasText: "25 years" })).toHaveCount(1);
+  });
+
+  await test.step("rate the answer, with a reason after thumbs down", async () => {
+    await page.getByRole("button", { name: "Bad answer" }).click();
+    await page.getByLabel("What was wrong with this answer?").fill("Missing detail");
+    await page.getByRole("button", { name: "Send", exact: true }).first().click();
+    await expect(page.getByRole("status").filter({ hasText: "Thanks, that helps" })).toBeVisible();
+
     const thumbsUp = page.getByRole("button", { name: "Good answer" });
     await thumbsUp.click();
     await expect(thumbsUp).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByText("Thanks for the feedback")).toBeVisible();
+  });
+
+  await test.step("theme toggle cycles System -> Light -> Dark -> System", async () => {
+    const toggle = nav.getByRole("button", { name: /^Theme:/ });
+    await toggle.click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await toggle.click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await toggle.click();
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
   });
 
   await test.step("delete the document", async () => {
@@ -113,4 +141,22 @@ test("a new user can sign up, upload, chat, vote, delete and log out", async ({ 
     await page.goto("/chat");
     await expect(page).toHaveURL(/\/login$/);
   });
+});
+
+test("on a phone, the sources panel slides in from a button", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Sign up straight through the API (the first test already covers the sign-up form).
+  const response = await request.post("http://localhost:8000/api/auth/register", {
+    data: { email: `e2e-mobile-${Date.now()}@example.com`, password: "e2e-password-123" },
+  });
+  const { access_token } = await response.json();
+  await page.addInitScript((token) => localStorage.setItem("rag_token", token), access_token);
+
+  await page.goto("/chat");
+  await expect(page.getByRole("complementary", { name: "Your sources" })).toBeHidden();
+  await page.getByRole("button", { name: /^Sources/ }).click();
+  const drawer = page.getByRole("dialog", { name: "Sources" });
+  await expect(drawer.getByText("No documents yet")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
 });

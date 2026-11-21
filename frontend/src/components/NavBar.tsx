@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { apiUrl } from "@/lib/api";
 import { clearToken, getToken } from "@/lib/auth";
+import { applyTheme, readTheme, type ThemeChoice } from "@/lib/theme";
 
 const LINKS = [
   { href: "/documents", label: "Documents" },
@@ -21,6 +22,40 @@ export function LogoMark({ className = "h-7 w-7" }: { className?: string }) {
       <circle cx="22.5" cy="22.5" r="5" fill="#fff" />
       <path d="M20.5 22.5h4" stroke="#e1603e" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
+  );
+}
+
+const THEME_LABEL: Record<ThemeChoice, { icon: string; label: string }> = {
+  system: { icon: "🖥️", label: "System" },
+  light: { icon: "☀️", label: "Light" },
+  dark: { icon: "🌙", label: "Dark" },
+};
+const NEXT_THEME: Record<ThemeChoice, ThemeChoice> = { system: "light", light: "dark", dark: "system" };
+
+// Cycles System -> Light -> Dark. The saved choice is read straight away (the server can't
+// know it, hence suppressHydrationWarning on the button).
+function ThemeToggle() {
+  const [theme, setTheme] = useState<ThemeChoice>(() =>
+    typeof window === "undefined" ? "system" : readTheme(),
+  );
+  const { icon, label } = THEME_LABEL[theme];
+
+  function cycle() {
+    const next = NEXT_THEME[theme];
+    applyTheme(next);
+    setTheme(next);
+  }
+
+  return (
+    <button
+      onClick={cycle}
+      suppressHydrationWarning
+      aria-label={`Theme: ${label}. Click to change.`}
+      title={`Theme: ${label}`}
+      className="rounded-md px-2 py-1.5 text-base transition-colors hover:bg-muted"
+    >
+      <span suppressHydrationWarning>{icon}</span>
+    </button>
   );
 }
 
@@ -70,7 +105,8 @@ export default function NavBar() {
             </Link>
           ))}
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          <ThemeToggle />
           {email && (
             <>
               <span className="hidden text-muted-foreground sm:inline">{email}</span>

@@ -71,6 +71,44 @@ export async function uploadDocument(file: File): Promise<DocumentItem> {
   return response.json();
 }
 
+// Same as uploadDocument, but reports progress (0-100). fetch can't report upload progress,
+// so this uses the older XMLHttpRequest, which can.
+export function uploadDocumentWithProgress(
+  file: File,
+  onProgress: (percent: number) => void,
+): Promise<DocumentItem> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", apiUrl("/api/documents"));
+    xhr.setRequestHeader("Authorization", `Bearer ${getToken() ?? ""}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) return reject(new UnauthorizedError());
+      let data: { detail?: unknown } & Partial<DocumentItem> = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        // not JSON: fall through to the generic message
+      }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(data as DocumentItem);
+      const detail = data.detail;
+      const message =
+        typeof detail === "string"
+          ? detail
+          : Array.isArray(detail) && detail[0]?.msg
+            ? detail[0].msg
+            : `Upload failed (${xhr.status})`;
+      reject(new Error(message));
+    };
+    xhr.onerror = () => reject(new Error("Can't reach the server. Please try again in a moment."));
+    const form = new FormData();
+    form.append("file", file);
+    xhr.send(form);
+  });
+}
+
 export async function deleteDocument(id: string): Promise<void> {
   await authFetch(`/api/documents/${id}`, { method: "DELETE" });
 }
@@ -116,12 +154,12 @@ export async function sendChat(
   return response.json();
 }
 
-// Rate an answer: 1 = 👍, 0 = 👎. Voting again changes the vote.
-export async function sendFeedback(runId: string, score: 0 | 1): Promise<void> {
+// Rate an answer: 1 = 👍, 0 = 👎, optionally with a comment. Voting again changes the vote.
+export async function sendFeedback(runId: string, score: 0 | 1, comment?: string): Promise<void> {
   await authFetch("/api/feedback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ run_id: runId, score }),
+    body: JSON.stringify({ run_id: runId, score, comment: comment || null }),
   });
 }
 

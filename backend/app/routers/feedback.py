@@ -35,8 +35,10 @@ def _client() -> Client:
     return Client()
 
 
-def send_to_langsmith(run_id: uuid.UUID, score: int, first_vote: bool) -> None:
-    """Background task: attach the vote to the answer's trace in LangSmith."""
+def send_to_langsmith(
+    run_id: uuid.UUID, score: int, first_vote: bool, comment: str | None = None
+) -> None:
+    """Background task: attach the vote (and optional comment) to the answer's trace."""
     if not langsmith_enabled():
         return
     try:
@@ -45,13 +47,14 @@ def send_to_langsmith(run_id: uuid.UUID, score: int, first_vote: bool) -> None:
                 run_id,
                 FEEDBACK_KEY,
                 score=score,
+                comment=comment,
                 feedback_id=feedback_id_for(run_id),
                 # Where the run was traced (LANGSMITH_AGENT_ID + LANGSMITH_AGENT_ENVIRONMENT),
                 # so LangSmith can find it.
                 address=address_from_env(),
             )
         else:
-            _client().update_feedback(feedback_id_for(run_id), score=score)
+            _client().update_feedback(feedback_id_for(run_id), score=score, comment=comment)
     except Exception:
         # The vote is already saved in our database; a LangSmith hiccup shouldn't bother the user.
         logger.exception("Could not send feedback for run %s to LangSmith", run_id)
@@ -70,4 +73,5 @@ async def give_feedback(
     first_vote = run.score is None
     run.score = body.score
     await session.commit()
-    background.add_task(send_to_langsmith, run.id, body.score, first_vote)
+    comment = body.comment.strip() if body.comment else None
+    background.add_task(send_to_langsmith, run.id, body.score, first_vote, comment or None)

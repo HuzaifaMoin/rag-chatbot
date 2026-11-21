@@ -4,6 +4,7 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sendFeedback, type ChatResponse, type Citation } from "@/lib/api";
+import { toast } from "@/lib/toast";
 
 // A message in the chat. Bot messages also carry the full backend response
 // (source, citations...); user messages only have text.
@@ -37,7 +38,13 @@ function citationTitle(c: Citation): string {
   return `${c.filename}${c.page ? ` · p. ${c.page}` : ""}`;
 }
 
-export default function ChatMessage({ message }: { message: Message }) {
+export default function ChatMessage({
+  message,
+  onRegenerate,
+}: {
+  message: Message;
+  onRegenerate?: () => void; // only given for the latest answer
+}) {
   // Which citation was last clicked (its source card gets highlighted).
   const [active, setActive] = useState<string | null>(null);
 
@@ -97,6 +104,17 @@ export default function ChatMessage({ message }: { message: Message }) {
           </span>
         )}
         <span className="text-muted-foreground">{(response.latency_ms / 1000).toFixed(1)}s</span>
+        <span className="ml-auto flex items-center gap-1">
+          <CopyButton text={message.content} />
+          {onRegenerate && (
+            <button
+              onClick={onRegenerate}
+              className="rounded-md px-2 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              ↻ Regenerate
+            </button>
+          )}
+        </span>
         <FeedbackButtons runId={response.run_id} />
       </div>
 
@@ -160,22 +178,57 @@ function CitationChip({ citation, onOpen }: { citation: Citation; onOpen: () => 
   );
 }
 
-// 👍 / 👎 under each answer. The vote is saved by the backend and attached to the
-// answer's LangSmith trace, so bad answers can be debugged step by step.
+function CopyButton({ text }: { text: string }) {
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Copied to clipboard");
+    } catch {
+      toast("Couldn't copy (your browser blocked it)", "error");
+    }
+  }
+  return (
+    <button
+      onClick={copy}
+      className="rounded-md px-2 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+    >
+      Copy
+    </button>
+  );
+}
+
+// 👍 / 👎 under each answer. The vote is saved by the backend and attached to the answer's
+// LangSmith trace. After a 👎 we ask "what was wrong?": that comment makes debugging much easier.
 function FeedbackButtons({ runId }: { runId: string }) {
   const [vote, setVote] = useState<0 | 1 | null>(null);
   const [error, setError] = useState(false);
+  const [askWhy, setAskWhy] = useState(false);
+  const [reason, setReason] = useState("");
 
   async function rate(score: 0 | 1) {
     if (score === vote) return;
     const previous = vote;
     setVote(score); // highlight straight away...
     setError(false);
+    setAskWhy(score === 0);
     try {
       await sendFeedback(runId, score);
     } catch {
       setVote(previous); // ...and undo it if saving failed
+      setAskWhy(false);
       setError(true);
+    }
+  }
+
+  async function sendReason(event: React.FormEvent) {
+    event.preventDefault();
+    if (!reason.trim()) return;
+    try {
+      await sendFeedback(runId, 0, reason.trim());
+      setAskWhy(false);
+      toast("Thanks, that helps improve the answers");
+    } catch {
+      toast("Couldn't send your comment", "error");
     }
   }
 
@@ -184,26 +237,61 @@ function FeedbackButtons({ runId }: { runId: string }) {
   const on = "bg-accent";
 
   return (
-    <span className="ml-auto flex items-center gap-1">
-      {vote !== null && !error && <span className="text-muted-foreground">Thanks for the feedback</span>}
-      {error && <span className="text-danger">Couldn&apos;t save</span>}
-      <button
-        onClick={() => rate(1)}
-        aria-label="Good answer"
-        aria-pressed={vote === 1}
-        className={`${base} ${vote === 1 ? on : off}`}
-      >
-        👍
-      </button>
-      <button
-        onClick={() => rate(0)}
-        aria-label="Bad answer"
-        aria-pressed={vote === 0}
-        className={`${base} ${vote === 0 ? on : off}`}
-      >
-        👎
-      </button>
-    </span>
+    <>
+      <span className="flex items-center gap-1">
+        {vote !== null && !error && !askWhy && (
+          <span className="text-muted-foreground">Thanks for the feedback</span>
+        )}
+        {error && <span className="text-danger">Couldn&apos;t save</span>}
+        <button
+          onClick={() => rate(1)}
+          aria-label="Good answer"
+          aria-pressed={vote === 1}
+          className={`${base} ${vote === 1 ? on : off}`}
+        >
+          👍
+        </button>
+        <button
+          onClick={() => rate(0)}
+          aria-label="Bad answer"
+          aria-pressed={vote === 0}
+          className={`${base} ${vote === 0 ? on : off}`}
+        >
+          👎
+        </button>
+      </span>
+      {askWhy && (
+        <form
+          onSubmit={sendReason}
+          onKeyDown={(e) => e.key === "Escape" && setAskWhy(false)}
+          className="flex w-full flex-wrap items-center gap-2 rounded-xl border bg-card p-2"
+        >
+          <input
+            autoFocus
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            maxLength={1000}
+            placeholder="What was wrong? (optional)"
+            aria-label="What was wrong with this answer?"
+            className="min-w-0 flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground"
+          />
+          <button
+            type="button"
+            onClick={() => setAskWhy(false)}
+            className="rounded-md px-2 py-1 text-muted-foreground hover:bg-muted"
+          >
+            Skip
+          </button>
+          <button
+            type="submit"
+            disabled={!reason.trim()}
+            className="rounded-md bg-primary px-3 py-1 font-semibold text-primary-foreground disabled:opacity-40"
+          >
+            Send
+          </button>
+        </form>
+      )}
+    </>
   );
 }
 
