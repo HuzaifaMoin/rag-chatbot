@@ -18,11 +18,11 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_access_token(user_id: uuid.UUID) -> str:
+def create_access_token(user_id: uuid.UUID, expires_in: timedelta | None = None) -> str:
     s = get_settings()
     payload = {
         "sub": str(user_id),
-        "exp": datetime.now(UTC) + timedelta(minutes=s.jwt_expire_minutes),
+        "exp": datetime.now(UTC) + (expires_in or timedelta(minutes=s.jwt_expire_minutes)),
     }
     return jwt.encode(payload, s.jwt_secret, algorithm=s.jwt_algorithm)
 

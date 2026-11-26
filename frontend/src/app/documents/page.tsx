@@ -4,11 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   deleteDocument,
+  getMe,
   listDocuments,
   uploadDocumentWithProgress,
   UnauthorizedError,
   type DocumentItem,
+  type GuestInfo,
 } from "@/lib/api";
+import DemoBanner from "@/components/DemoBanner";
 import { toast } from "@/lib/toast";
 import DocumentViewer, { type ViewerTarget } from "@/components/DocumentViewer";
 import StatusBadge from "@/components/StatusBadge";
@@ -25,6 +28,7 @@ export default function DocumentsPage() {
   const [error, setError] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [guest, setGuest] = useState<GuestInfo | null>(null); // demo accounts only
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
   const closeViewer = useCallback(() => setViewer(null), []);
 
@@ -41,9 +45,12 @@ export default function DocumentsPage() {
     listDocuments().then(setDocs).catch(handleError);
   }, [handleError]);
 
-  // Load the list once when the page opens.
+  // Load the list once when the page opens (and check if this is a demo account).
   useEffect(() => {
     load();
+    getMe()
+      .then((me) => setGuest(me.guest))
+      .catch(() => {}); // the list request already handles errors
   }, [load]);
 
   // Polling: while any document is still processing, ask again in 2 seconds.
@@ -105,6 +112,7 @@ export default function DocumentsPage() {
           Everything you upload here becomes searchable in the chat.
         </p>
       </div>
+      {guest && <DemoBanner guest={guest} />}
 
       <label
         onDragOver={(e) => {

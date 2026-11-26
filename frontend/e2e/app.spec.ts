@@ -97,7 +97,7 @@ test("a new user can sign up, upload, chat, vote, delete and log out", async ({
       page.getByRole("heading", { name: "Chat with your documents" }),
     ).toBeVisible();
     await expect(page.getByText("Answers with citations")).toBeVisible();
-    await page.getByRole("link", { name: "Get started" }).click();
+    await page.getByRole("link", { name: "Log in or sign up" }).click();
     await expect(page).toHaveURL(/\/login$/);
   });
 
@@ -366,4 +366,23 @@ test("saved chats are listed, reopen with their sources, and survive a reload", 
   await expect(
     page.getByText("Ask anything about your documents"),
   ).toBeVisible();
+});
+
+// "Try the demo": one click makes a guest account with the Northwind handbook ready.
+// Real all the way through (no fakes): it doesn't ask a question, so no LLM is needed.
+test("a visitor can try the demo without signing up", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Try the demo, no sign-up" }).click();
+
+  await expect(page).toHaveURL(/\/chat$/);
+  const banner = page.getByRole("status").filter({ hasText: "Demo account" });
+  await expect(banner).toContainText("15 of 15 questions left today");
+  await expect(page.getByText("Demo guest")).toBeVisible();
+  // The sample handbook is already uploaded, ready and searched.
+  await expect(page.getByText("northwind_handbook.md").filter({ visible: true })).toBeVisible();
+  await expect(page.getByText("Searching 1 of 1 document")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Does Northwind offer a company car/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "End demo" }).click();
+  await expect(page).toHaveURL(/\/login$/);
 });

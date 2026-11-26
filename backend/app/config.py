@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     web_search_results: int = 5
 
     max_upload_mb: int = 20
+
+    # "Try the demo": throwaway guest accounts with the Northwind handbook preloaded.
+    guest_ttl_hours: int = 24  # guests (and everything they made) are deleted after this
+    guest_daily_questions: int = 15  # answered questions per guest per 24 hours
+    guest_max_documents: int = 4  # the handbook + 3 uploads of their own
+    guest_max_upload_mb: int = 2
+    guests_per_ip_per_hour: int = 10  # stops one visitor creating thousands of accounts
     cors_origins: list[str] = ["http://localhost:3000"]
 
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, statu
 from sqlalchemy import select
 
 from app.config import get_settings
+from app.demo import check_guest_upload
 from app.deps import CurrentUser, SessionDep
 from app.ingestion import SUPPORTED_EXTENSIONS, ingest_document
 from app.models import Chunk, Document
@@ -35,9 +36,10 @@ async def upload_document(
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
     data = await file.read(max_bytes + 1)
     if len(data) > max_bytes:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large")
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "File too large")
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "File is empty")
+    await check_guest_upload(session, user.id, len(data))  # demo accounts have tighter limits
 
     doc = Document(owner_id=user.id, filename=filename)
     session.add(doc)

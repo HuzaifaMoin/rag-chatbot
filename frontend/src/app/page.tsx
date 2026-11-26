@@ -1,5 +1,6 @@
 import Link from "next/link";
 import BackendStatus from "@/components/BackendStatus";
+import DemoButton from "@/components/DemoButton";
 
 const FEATURES = [
   {
@@ -41,19 +42,20 @@ export default function Home() {
             you can check it.
           </p>
           <div className="flex flex-wrap gap-3">
+            <DemoButton className="rounded-lg bg-primary px-5 py-2.5 font-semibold text-primary-foreground shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60">
+              Try the demo, no sign-up
+            </DemoButton>
             <Link
               href="/login"
-              className="rounded-lg bg-primary px-5 py-2.5 font-semibold text-primary-foreground shadow-sm transition-opacity hover:opacity-90"
-            >
-              Get started
-            </Link>
-            <Link
-              href="/chat"
               className="rounded-lg border bg-card px-5 py-2.5 font-semibold transition-colors hover:bg-muted"
             >
-              Open chat
+              Log in or sign up
             </Link>
           </div>
+          <p className="max-w-xl text-sm text-muted-foreground">
+            The demo opens a private guest account with a sample company handbook already
+            uploaded. You get 15 questions, and the account is deleted after 24 hours.
+          </p>
         </div>
 
         {/* A static preview of what a cited answer looks like. */}

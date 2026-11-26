@@ -312,3 +312,22 @@ export async function login(email: string, password: string): Promise<string> {
   const data = await response.json();
   return data.access_token;
 }
+
+// ---- "Try the demo" ----
+
+// Only on guest accounts: when the demo account is deleted and how many questions are left.
+export type GuestInfo = { expires_at: string; questions_left: number; question_limit: number };
+
+export type Me = { id: string; email: string; guest: GuestInfo | null };
+
+export async function getMe(): Promise<Me> {
+  return (await authFetch("/api/auth/me")).json();
+}
+
+// Make a fresh guest account (the Northwind handbook is already in it) and return its token.
+export async function startDemo(): Promise<string> {
+  const response = await request("/api/auth/guest", { method: "POST" });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  const data = await response.json();
+  return data.access_token;
+}

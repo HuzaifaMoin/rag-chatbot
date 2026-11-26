@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { login, register } from "@/lib/api";
 import { saveToken } from "@/lib/auth";
 import { LogoMark } from "@/components/NavBar";
+import DemoButton from "@/components/DemoButton";
 
 const INPUT =
   "rounded-lg border border-input bg-background px-3 py-2 font-normal outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
@@ -95,6 +96,13 @@ export default function LoginPage() {
         >
           {isLogin ? "No account? Sign up" : "Have an account? Log in"}
         </button>
+
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
+        </div>
+        <DemoButton className="rounded-lg border bg-card px-3 py-2.5 font-semibold transition-colors hover:bg-muted disabled:opacity-60">
+          Just looking? Try the demo
+        </DemoButton>
       </form>
     </main>
   );

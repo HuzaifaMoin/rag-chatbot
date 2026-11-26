@@ -15,6 +15,7 @@ from app.conversations import (
     save_exchange,
 )
 from app.db import SessionLocal
+from app.demo import check_question_quota
 from app.deps import CurrentUser, SessionDep
 from app.models import ChatRun
 from app.schemas import ChatRequest, ChatResponse, Citation
@@ -65,6 +66,7 @@ async def chat(body: ChatRequest, user: CurrentUser, session: SessionDep) -> Cha
     """Ask a question. Answers come from your documents (with citations); if they
     don't cover it, the agent falls back to web search / calculator and says so."""
     started = time.perf_counter()
+    await check_question_quota(session, user.id)  # demo guests: 429 when out of questions
     conversation_id, is_new, history = await prepare_conversation(session, user.id, body)
     try:
         state, run_id, thread_id = await run_agent(
@@ -107,7 +109,9 @@ async def chat_stream(
     step (a step started/finished), token (answer text), reset (draft thrown away),
     done (the full ChatResponse), error."""
     user_id = user.id  # read now: the request's DB session is gone once streaming starts
-    # Before streaming starts, so a wrong conversation id is a normal 404.
+    # Before streaming starts, so a wrong conversation id is a normal 404
+    # (and a guest who is out of questions gets a normal 429).
+    await check_question_quota(session, user_id)
     conversation_id, is_new, history = await prepare_conversation(session, user_id, body)
 
     async def events() -> AsyncIterator[str]:

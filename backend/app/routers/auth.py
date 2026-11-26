@@ -1,9 +1,11 @@
+from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 
+from app.demo import create_guest, delete_expired_guests, guest_info
 from app.deps import CurrentUser, SessionDep
 from app.models import User
 from app.schemas import RegisterRequest, TokenResponse, UserOut
@@ -34,6 +36,22 @@ async def login(
     return TokenResponse(access_token=create_access_token(user.id))
 
 
+@router.post("/guest", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+async def start_demo(request: Request, session: SessionDep) -> TokenResponse:
+    """Start the demo: a fresh guest account with the Northwind handbook preloaded.
+    It lasts guest_ttl_hours and can ask guest_daily_questions questions a day."""
+    await delete_expired_guests(session)  # tidy up as we go (also done every 30 min)
+    ip = request.client.host if request.client else "unknown"
+    user = await create_guest(session, ip)
+    info = await guest_info(session, user.id)
+    # The token stops working when the account is deleted, so it needn't outlive it.
+    return TokenResponse(
+        access_token=create_access_token(user.id, expires_in=info.expires_at - datetime.now(UTC))
+    )
+
+
 @router.get("/me", response_model=UserOut)
-async def me(user: CurrentUser) -> User:
-    return user
+async def me(user: CurrentUser, session: SessionDep) -> UserOut:
+    out = UserOut.model_validate(user)
+    out.guest = await guest_info(session, user.id)
+    return out

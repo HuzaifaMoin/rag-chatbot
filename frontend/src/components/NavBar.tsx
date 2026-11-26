@@ -64,6 +64,7 @@ export default function NavBar() {
   const router = useRouter();
   // undefined = still checking, null = logged out, a string = the user's email
   const [email, setEmail] = useState<string | null | undefined>(undefined);
+  const [isGuest, setIsGuest] = useState(false); // a "Try the demo" account
 
   // Ask "who am I?" every time the address changes. The nav bar stays on screen
   // between pages, so this is how it notices you just logged in.
@@ -72,7 +73,10 @@ export default function NavBar() {
       headers: { Authorization: `Bearer ${getToken() ?? ""}` },
     })
       .then((response) => (response.ok ? response.json() : null))
-      .then((user) => setEmail(user ? user.email : null))
+      .then((user) => {
+        setEmail(user ? user.email : null);
+        setIsGuest(Boolean(user?.guest));
+      })
       .catch(() => setEmail(null));
   }, [pathname]);
 
@@ -109,12 +113,18 @@ export default function NavBar() {
           <ThemeToggle />
           {email && (
             <>
-              <span className="hidden text-muted-foreground sm:inline">{email}</span>
+              {isGuest ? (
+                <span className="hidden rounded-full bg-info-soft px-2.5 py-1 text-xs font-semibold text-info sm:inline">
+                  Demo guest
+                </span>
+              ) : (
+                <span className="hidden text-muted-foreground sm:inline">{email}</span>
+              )}
               <button
                 onClick={logout}
                 className="rounded-md border bg-card px-3 py-1.5 font-medium transition-colors hover:bg-muted"
               >
-                Log out
+                {isGuest ? "End demo" : "Log out"}
               </button>
             </>
           )}

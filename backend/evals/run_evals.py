@@ -12,7 +12,6 @@ import asyncio
 import os
 import sys
 from collections import defaultdict
-from pathlib import Path
 
 # Must happen BEFORE the app is imported (app/db.py connects at import time).
 EVAL_DATABASE_URL = os.environ.get(
@@ -28,13 +27,14 @@ from sqlalchemy import delete, select  # noqa: E402
 from app.agent.graph import run_agent  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.db import SessionLocal, init_db  # noqa: E402
+from app.demo import HANDBOOK_PATH  # noqa: E402
 from app.ingestion import ingest_document  # noqa: E402
 from app.models import Document, DocumentStatus, User  # noqa: E402
 from app.security import hash_password  # noqa: E402
 from evals.dataset import DATASET_NAME, EXAMPLES  # noqa: E402
 from evals.evaluators import EVALUATORS, JUDGE_MODEL  # noqa: E402
 
-HANDBOOK = Path(__file__).parent / "data" / "northwind_handbook.md"
+HANDBOOK = HANDBOOK_PATH  # the same file the "Try the demo" accounts get
 EVAL_USER_EMAIL = "eval-bot@northwind.example"
 MIN_CORRECTNESS = float(os.environ.get("EVAL_MIN_CORRECTNESS", "0.8"))
 

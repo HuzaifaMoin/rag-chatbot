@@ -18,11 +18,20 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class GuestInfo(BaseModel):
+    """Only for "Try the demo" accounts: when it ends and how many questions are left."""
+
+    expires_at: datetime
+    questions_left: int
+    question_limit: int
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     email: EmailStr
     created_at: datetime
+    guest: GuestInfo | None = None  # None for normal accounts
 
 
 class DocumentOut(BaseModel):

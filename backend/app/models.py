@@ -36,6 +36,20 @@ class User(Base):
     )
 
 
+class GuestAccount(Base):
+    """Marks a user as a "Try the demo" guest. A separate table (not a column on users)
+    because create_all can't add columns to a table that already exists."""
+
+    __tablename__ = "guest_accounts"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    ip: Mapped[str] = mapped_column(String(64), index=True)  # who asked for it (rate limit)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class DocumentStatus(enum.StrEnum):
     processing = "processing"
     ready = "ready"
