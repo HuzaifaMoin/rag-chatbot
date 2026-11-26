@@ -1,4 +1,5 @@
-# Runs on every push / pull request: lint + tests for the backend, lint + types + build for the frontend.
+# Runs on every push / pull request: lint + tests for the backend, lint + types + build for the
+# frontend, the end-to-end test, and a check that the production Docker image starts.
 # Needs no secrets: tests use a fake LLM and LangSmith tracing is switched off.
 name: CI
 
@@ -190,3 +191,64 @@ jobs:
             frontend/playwright-report/
             frontend/test-results/
           retention-days: 7
+
+  docker:
+    name: Docker image (build + start)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      db:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+          POSTGRES_DB: rag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag -d rag"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the image
+        run: docker build -t rag-backend backend
+
+      # The safety check: production mode must refuse the dev JWT secret.
+      - name: Refuses to start with an unsafe secret
+        run: |
+          if docker run --rm --network host -e GROQ_API_KEY=gsk_ci_dummy rag-backend > out.log 2>&1; then
+            echo "::error::The image started without a real JWT_SECRET"; exit 1
+          fi
+          grep -q "needs a real JWT_SECRET" out.log  # it failed for the right reason
+          echo "Refused, as it should."
+
+      # --network host: the container reaches the Postgres service on localhost.
+      # The Groq key is a dummy: starting up and making a demo account need no LLM.
+      - name: Start the container
+        run: |
+          docker run -d --name api --network host \
+            -e DATABASE_URL=postgresql://rag:rag@localhost:5432/rag \
+            -e JWT_SECRET="$(openssl rand -hex 32)" \
+            -e GROQ_API_KEY=gsk_ci_dummy \
+            -e LANGSMITH_TRACING=false \
+            rag-backend
+
+      - name: Health check and a demo account
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8000/api/health && break
+            sleep 2
+          done
+          curl -sf http://localhost:8000/api/health
+          # Makes a guest with the handbook: proves the models and demo data are in the image.
+          curl -sf -X POST http://localhost:8000/api/auth/guest | grep -q access_token
+          echo "Image starts, connects to Postgres and creates demo accounts."
+
+      - name: Container logs
+        if: always()
+        run: docker logs api || true
