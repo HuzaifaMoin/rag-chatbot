@@ -53,7 +53,15 @@ class Settings(BaseSettings):
     # Local, free models (run on CPU via fastembed / ONNX).
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dim: int = 384
-    reranker_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"
+    # 8-bit version of Xenova/ms-marco-MiniLM-L-6-v2, registered in embeddings.py.
+    reranker_model: str = "rag/ms-marco-MiniLM-L-6-v2-q8"
+    # Memory vs speed, tuned to fit free hosts (512 MB). A model's memory use grows
+    # with how many texts it handles at once, so batches stay small. ONNX's memory
+    # "arena" keeps its biggest allocation forever (one large upload would then cost
+    # that much memory for good); turned off, memory is given back after every batch.
+    embed_batch_size: int = 4
+    rerank_batch_size: int = 8
+    onnx_mem_arena: bool = False
 
     chunk_size: int = 1000
     chunk_overlap: int = 150
