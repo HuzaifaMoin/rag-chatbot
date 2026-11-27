@@ -1,0 +1,72 @@
+# Deploys the backend to Modal (modal.com) after CI has passed on main.
+# Can also be started by hand from the Actions tab.
+#
+# Needs two repository secrets (Settings > Secrets and variables > Actions), made
+# on modal.com > Settings > API tokens:  MODAL_TOKEN_ID  and  MODAL_TOKEN_SECRET.
+# Until they exist, the deploy step is skipped instead of failing.
+name: Deploy backend
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# Never two deploys at once; a newer one waits for the older one to finish.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Modal
+    # From CI: only when it passed, and only for a push (not a pull request).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: modal
+      url: https://huzaifamoin784--rag-chatbot-api-api.us-east.modal.run/docs
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+
+    steps:
+      - name: Check the Modal token is set
+        id: token
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "::notice::Skipping: add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET secrets to deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.token.outputs.ready == 'true'
+        with:
+          # Deploy exactly the commit CI tested, not whatever is newest.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Install uv
+        if: steps.token.outputs.ready == 'true'
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.12"
+
+      - name: Deploy
+        if: steps.token.outputs.ready == 'true'
+        working-directory: backend
+        run: uvx modal==1.6.4 deploy modal_app.py
+
+      - name: Check the live API answers
+        if: steps.token.outputs.ready == 'true'
+        run: |
+          # The first request may wait for a cold start (~10-20 s).
+          curl --fail --silent --show-error --max-time 120 --retry 3 --retry-delay 5 \
+            https://huzaifamoin784--rag-chatbot-api-api.us-east.modal.run/api/health
+          echo "Deployed: https://huzaifamoin784--rag-chatbot-api-api.us-east.modal.run" >> "$GITHUB_STEP_SUMMARY"
