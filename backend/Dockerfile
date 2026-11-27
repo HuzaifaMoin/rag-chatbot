@@ -51,5 +51,5 @@ EXPOSE 8000
 # --proxy-headers: behind the host's proxy, read the visitor's real IP from
 # X-Forwarded-For (the demo's "accounts per IP" limit needs it).
 # FORWARDED_ALLOW_IPS=* trusts that header from any proxy, which is fine because the
-# host's proxy is the only way in. PORT is set by the host (Render uses 10000).
+# host's proxy is the only way in. PORT can be changed by the host.
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers"]

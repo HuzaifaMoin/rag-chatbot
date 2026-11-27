@@ -11,3 +11,4 @@ tests/
 evals/
 Dockerfile
 .dockerignore
+modal_app.py
